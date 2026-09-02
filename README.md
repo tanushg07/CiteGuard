@@ -3,10 +3,6 @@
 #  CiteGuard
 **Citation Verification and Evidence Alignment System**
 
-[![Status](https://img.shields.io/badge/Status-Active_Development-brightgreen.svg)]()
-[![Timeline](https://img.shields.io/badge/Timeline-30_Days-blue.svg)]()
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-orange.svg)]()
-
 *Upload a research paper → Extract claims & citations → Retrieve evidence → Verify via NLI & Numerical checks → See validity results!*
 
 </div>
@@ -19,12 +15,12 @@ CiteGuard is an automated, end-to-end pipeline designed to verify citations in a
 
 ###  Core Features
 
-- ** Smart Document Parsing:** Extracts text, paragraphs, and sections while preserving page numbers.
-- ** Claim & Citation Extraction:** Detects complex citation groups and binds them to the claims they support.
-- ** Intelligent Evidence Retrieval:** Uses TF-IDF & BM25 to sift through sources and retrieve candidate evidence.
-- ** Cross-Encoder Re-ranking:** Re-ranks the evidence to find the most contextually relevant passages.
-- ** Advanced Verification:** Employs NLI (Entailment/Contradiction/Neutral) and Numerical checks for rock-solid claim verification.
-- ** Interactive Dashboard:** A sleek Web UI to upload PDFs, visualize the extraction pipeline, and view confidence scores.
+- **Smart Document Parsing:** Extracts text, paragraphs, and sections while preserving page numbers.
+- **Claim & Citation Extraction:** Detects complex citation groups and binds them to the claims they support.
+- **Intelligent Evidence Retrieval:** Uses TF-IDF & BM25 to sift through sources and retrieve candidate evidence.
+- **Cross-Encoder Re-ranking:** Re-ranks the evidence to find the most contextually relevant passages.
+- **Advanced Verification:** Employs NLI (Entailment/Contradiction/Neutral) and Numerical checks for rock-solid claim verification.
+- **Interactive Dashboard:** A sleek Web UI to upload PDFs, visualize the extraction pipeline, and view confidence scores.
 
 ###  Tech Stack
 
@@ -60,7 +56,6 @@ graph TD
 ```
 
 ---
-
 
 
 ## 🚀 Getting Started (Coming Soon)
