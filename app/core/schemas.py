@@ -21,6 +21,7 @@ class RetrievedEvidence(BaseModel):
 
 class VerificationResult(BaseModel):
     claim_id: str = Field(..., description="The ID of the claim being verified")
+    claim_text: str = Field(..., description="The text of the claim being verified")
     evidence: List[RetrievedEvidence] = Field(default_factory=list, description="List of evidence chunks used")
     nli_label: VerificationLabel = Field(..., description="The predicted NLI label")
     nli_confidence: float = Field(..., description="The confidence score of the NLI prediction")
