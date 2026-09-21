@@ -1,61 +1,90 @@
 import re
 import uuid
-from typing import List, Dict
+from typing import List, Dict, Any
 from app.core.schemas import ClaimCitationPair
 
 class Extractor:
     """
-    Extracts claims and their associated citation markers from paragraphs.
+    Extracts citation-bearing claims from document paragraphs and pairs them with
+    their full paragraph context and citation markers.
     """
     def __init__(self):
-        # Regex for bracketed numbers like [1], [1, 2], [1-3]
-        self.bracket_pattern = re.compile(r'\[(\d+(?:\s*,\s*\d+)*|\d+\s*-\s*\d+)\]')
-        # Regex for author-year like (Smith, 2020) or (Smith et al., 2020)
-        self.author_year_pattern = re.compile(r'\([A-Za-z\s]+(?:et al\.)?,\s*\d{4}\)')
+        # Bracketed numbers: [1], [1, 2], [1-3], [12, 14, 18]
+        self.bracket_pattern = re.compile(r'\[\s*\d+(?:\s*[,-]\s*\d+)*\s*\]')
+        # Author-year: (Smith, 2020), (Smith et al., 2020), (Alon and Yahav, 2021)
+        self.author_year_pattern = re.compile(r'\([A-Za-z\s]+(?:et al\.)?,\s*\d{4}[a-z]?\)')
+        # Secondary author year format: Vaswani et al. (2017)
+        self.inline_author_year = re.compile(r'\b[A-Za-z\s]+(?:et al\.)?\s*\(\d{4}[a-z]?\)')
 
     def _split_sentences(self, text: str) -> List[str]:
         """
-        Splits a paragraph into sentences using a simple regex heuristic.
+        Splits paragraph into sentences using a period/question/exclamation boundary.
         """
-        # Split by period, question mark, or exclamation mark followed by a space and capital letter.
-        # This is a naive but effective heuristic for MVP.
-        sentences = re.split(r'(?<=[.!?]) +(?=[A-Z])', text)
-        return [s.strip() for s in sentences if s.strip()]
+        # Protect common academic abbreviations
+        protected = text
+        replacements = [
+            ("et al.", "ET_AL_TOKEN"),
+            ("i.e.", "I_E_TOKEN"),
+            ("e.g.", "E_G_TOKEN"),
+            ("Fig.", "FIG_TOKEN"),
+            ("Tab.", "TAB_TOKEN"),
+            ("Ref.", "REF_TOKEN"),
+            ("vs.", "VS_TOKEN"),
+            ("approx.", "APPROX_TOKEN"),
+        ]
+        for orig, rep in replacements:
+            protected = protected.replace(orig, rep)
 
-    def extract(self, paragraphs: List[Dict[str, str]]) -> List[ClaimCitationPair]:
+        # Split on sentence terminals followed by space, or newlines
+        raw_sentences = re.split(r'(?:(?<=[.!?])\s+(?=[A-Z0-9"\'\(\[])|\n+)', protected)
+
+        sentences = []
+        for s in raw_sentences:
+            s_clean = s
+            for orig, rep in replacements:
+                s_clean = s_clean.replace(rep, orig)
+            s_clean = s_clean.strip()
+            if len(s_clean) > 10:
+                sentences.append(s_clean)
+
+        return sentences
+
+    def extract(self, paragraphs: List[Dict[str, Any]]) -> List[ClaimCitationPair]:
         """
-        Finds sentences that contain citations and binds them as ClaimCitationPairs.
+        Scans paragraphs for claims that contain academic citations.
+        Returns a list of ClaimCitationPair objects with surrounding context.
         """
-        pairs = []
-        
+        pairs: List[ClaimCitationPair] = []
+
         for para in paragraphs:
-            text = para["text"]
-            page_number = para["page_number"]
-            
-            sentences = self._split_sentences(text)
-            
+            if para.get("section") == "References":
+                continue
+
+            para_text = para["text"]
+            page_number = para.get("page_number", 1)
+            section = para.get("section", "Body")
+
+            sentences = self._split_sentences(para_text)
+
             for sentence in sentences:
-                # Find all citation markers in the sentence
-                bracket_matches = self.bracket_pattern.findall(sentence)
-                author_matches = self.author_year_pattern.findall(sentence)
-                
-                # We need the full marker text, e.g., "[1]" not just "1"
                 all_markers = []
-                for match in re.finditer(self.bracket_pattern, sentence):
+                for match in self.bracket_pattern.finditer(sentence):
                     all_markers.append(match.group(0))
-                for match in re.finditer(self.author_year_pattern, sentence):
+                for match in self.author_year_pattern.finditer(sentence):
                     all_markers.append(match.group(0))
-                
-                # For every marker found, create a ClaimCitationPair
+                for match in self.inline_author_year.finditer(sentence):
+                    all_markers.append(match.group(0))
+
                 for marker in all_markers:
-                    # Clean the citation marker from the claim text to form the bare claim
-                    # (Optional: Sometimes we want to keep it to preserve context, but for MVP we leave it in)
+                    claim_id = f"claim_{uuid.uuid4().hex[:8]}"
                     pair = ClaimCitationPair(
-                        id=f"claim_{uuid.uuid4().hex[:8]}",
+                        id=claim_id,
                         text=sentence,
+                        context=para_text,
                         citation_marker=marker,
-                        page_number=page_number
+                        page_number=page_number,
+                        section=section
                     )
                     pairs.append(pair)
-                    
+
         return pairs
