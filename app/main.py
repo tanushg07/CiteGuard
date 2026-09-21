@@ -4,21 +4,36 @@ from app.api.routes import router
 
 app = FastAPI(
     title="CiteGuard API",
-    description="Backend API for Citation Verification and Evidence Alignment",
-    version="1.0.0"
+    description="AI-Powered Citation Verification & Evidence Alignment Platform",
+    version="2.0.0"
 )
 
-# Configure CORS for the frontend dashboard
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For MVP, allow all. Restrict in production.
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include the main API routes
+# Include main API routes
 app.include_router(router, prefix="/api")
+
+@app.get("/")
+def root():
+    return {
+        "service": "CiteGuard API",
+        "version": "2.0.0",
+        "status": "operational",
+        "endpoints": {
+            "verify_pdf": "POST /api/verify",
+            "analyze_text": "POST /api/analyze-text",
+            "benchmark": "GET /api/benchmark",
+            "results": "GET /api/results/{job_id}",
+            "export": "GET /api/export/{job_id}?format=json|csv"
+        }
+    }
 
 @app.get("/health")
 def health_check():
