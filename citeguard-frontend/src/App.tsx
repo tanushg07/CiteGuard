@@ -92,7 +92,10 @@ function App() {
           <ProcessingView
             params={params}
             onComplete={handleProcessingComplete}
-            onError={(err) => console.error('Analysis error:', err)}
+            onError={(err) => {
+              console.error('Analysis error:', err);
+              // Do NOT reset to landing — ProcessingView shows the error inline with Retry button
+            }}
             onCancel={handleReset}
           />
         )}
