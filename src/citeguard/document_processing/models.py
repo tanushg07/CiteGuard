@@ -9,6 +9,10 @@ building up to a ClaimCitationPair -- other modules never see these directly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from citeguard.document_processing.claim_extractor import Claim
 
 
 @dataclass
@@ -65,6 +69,7 @@ class ParsedDocument:
     sections: list[Section]
     references: list[Reference]
     citations: list[Citation] = field(default_factory=list)
+    claims: list[Claim] = field(default_factory=list)
 
     def paragraph_text(self, page_number: int, paragraph_index: int) -> str | None:
         for page in self.pages:
