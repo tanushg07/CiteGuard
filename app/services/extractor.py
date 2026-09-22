@@ -1,6 +1,6 @@
 import re
-import uuid
-from typing import List, Dict, Any, Set
+from typing import Any
+
 from app.core.schemas import ClaimCitationPair
 
 
@@ -21,7 +21,7 @@ class Extractor:
         # Inline: Vaswani et al. (2017)
         self.inline_author_year = re.compile(r"\b[A-Z][a-zA-Z\-]+(?:\s+(?:et al\.|and [A-Z][a-zA-Z]+))?\s*\(\d{4}[a-z]?\)")
 
-    def _split_sentences(self, text: str) -> List[str]:
+    def _split_sentences(self, text: str) -> list[str]:
         """Splits paragraph into sentences using period/question/exclamation boundaries."""
         protected = text
         replacements = [
@@ -67,14 +67,14 @@ class Extractor:
                 return m.group(0)
         return ""
 
-    def extract(self, paragraphs: List[Dict[str, Any]], references=None, enricher=None) -> List[ClaimCitationPair]:
+    def extract(self, paragraphs: list[dict[str, Any]], references=None, enricher=None) -> list[ClaimCitationPair]:
         """
         Scans paragraphs for claims that contain academic citations.
         Each cited SENTENCE is extracted exactly ONCE (deduplicated), paired with
         its primary citation marker and paragraph context.
         """
-        pairs: List[ClaimCitationPair] = []
-        seen_sentences: Set[str] = set()
+        pairs: list[ClaimCitationPair] = []
+        seen_sentences: set[str] = set()
 
         for para in paragraphs:
             if para.get("section", "").lower().strip() in {"references", "bibliography", "works cited"}:
@@ -110,8 +110,8 @@ class Extractor:
                     seen_sentences.add(key)
                     pairs.append(ClaimCitationPair(id=f'claim_{len(pairs)+1:04d}', text=sentence,
                         context=para_text, citation_marker=marker, page_number=page_number, section=section))
-        from app.services.reference_metadata import ReferenceEnricher, reference_for_marker
-        enricher = enricher or ReferenceEnricher()
+        from app.services.reference_metadata import reference_for_marker, CompositeEnricher
+        enricher = enricher or CompositeEnricher()
         for pair in pairs:
             raw = reference_for_marker(pair.citation_marker, references or [])
             pair.reference_metadata = enricher.enrich(raw)
