@@ -1,32 +1,18 @@
-# React + TypeScript + Vite
+# CiteGuard React frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The active UI uses React 19, TypeScript, Tailwind CSS 4, and Vite 8. Use Node.js 22.12+.
 
-Currently, two official plugins are available:
+From the repository root:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+npm ci --prefix citeguard-frontend
+npm run dev --prefix citeguard-frontend
+npm run lint --prefix citeguard-frontend
+npm run build --prefix citeguard-frontend
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Run `uvicorn app.main:app --reload` in an activated Python environment for the API. Vite proxies `/api` to port 8000; production builds are served by FastAPI from `citeguard-frontend/dist`.
+
+`ClaimCard` provides accessible animated explanations and shared-term highlighting. `DocumentSummary` renders the score gauge and enriched cited-reference badges. `Toast` displays global analysis notifications, and `ReportSkeleton` renders while analysis runs. Reduced-motion preferences are respected.
+
+See the [master README](../README.md) for setup, optional Crossref/Groq services, API documentation, evaluation, and limitations. Backend secrets belong only in the repository-root `.env`, never in frontend variables or assets.
