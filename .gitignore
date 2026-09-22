@@ -1,3 +1,6 @@
+.venv312/
+data/jobs/
+evaluation_results.json
 # Virtual environments
 .venv/
 venv/
