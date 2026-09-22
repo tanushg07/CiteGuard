@@ -404,6 +404,28 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
               )}
             </div>
 
+            {selectedClaim.reference_metadata && (
+              <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-2 text-sm">
+                <h3 className="font-semibold">Reference metadata</h3>
+                <p className="text-xs text-slate-500">
+                  {selectedClaim.reference_metadata.provider === 'semantic_scholar'
+                    ? 'Enriched by Semantic Scholar. Metadata is not verification evidence.'
+                    : `Bibliography fallback (${selectedClaim.reference_metadata.status.replaceAll('_', ' ')}).`}
+                </p>
+                {selectedClaim.reference_metadata.title && <p>{selectedClaim.reference_metadata.title}</p>}
+                {!!selectedClaim.reference_metadata.authors.length && <p>{selectedClaim.reference_metadata.authors.join(', ')}</p>}
+                <p>{selectedClaim.reference_metadata.venue} {selectedClaim.reference_metadata.year}</p>
+                {selectedClaim.reference_metadata.doi && (
+                  <a className="text-blue-700 underline" target="_blank" rel="noopener noreferrer"
+                    href={`https://doi.org/${encodeURIComponent(selectedClaim.reference_metadata.doi)}`}>
+                    DOI: {selectedClaim.reference_metadata.doi}
+                  </a>
+                )}
+                {selectedClaim.reference_metadata.abstract && <details><summary>Abstract</summary><p>{selectedClaim.reference_metadata.abstract}</p></details>}
+                <p className="text-slate-600">{selectedClaim.reference_metadata.raw_reference || 'No unambiguous bibliography entry found.'}</p>
+              </section>
+            )}
+
             {/* Traceability Breadcrumb Footer */}
             <div className="flex items-center space-x-2 text-xs font-medium text-slate-500 bg-white border border-slate-200 rounded p-3 shadow-2xs">
               <span className="font-mono">{selectedClaim.id}</span>

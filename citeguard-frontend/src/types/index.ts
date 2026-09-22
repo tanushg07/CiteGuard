@@ -17,6 +17,17 @@ export interface NumericalComparison {
 }
 
 export interface Claim {
+  reference_metadata?: {
+    raw_reference: string;
+    provider: string;
+    status: string;
+    title?: string | null;
+    doi?: string | null;
+    abstract?: string | null;
+    venue?: string | null;
+    authors: string[];
+    year?: number | null;
+  } | null;
   id: string;
   text: string;
   context: string;
