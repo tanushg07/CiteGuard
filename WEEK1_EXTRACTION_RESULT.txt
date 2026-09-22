@@ -1,0 +1,145 @@
+======================================================================
+CiteGuard - Document Processing Module (Jagadish)
+Week 1 Result: Academic PDF -> Claim-Citation Pairs
+======================================================================
+
+----------------------------------------------------------------------
+PART 1: Minimal example (single sentence, no PDF)
+----------------------------------------------------------------------
+
+INPUT (one sentence with a citation):
+  "The sky is blue due to Rayleigh scattering [1]."
+
+OUTPUT (Claim-Citation Pair, JSON):
+{
+  "claim_id": "claim_001",
+  "claim": "The sky is blue due to Rayleigh scattering.",
+  "citation_id": "cit_001",
+  "page": 1,
+  "paragraph": 1
+}
+
+What changed: the citation marker "[1]" was removed from the claim
+text, but preserved as a separate link via citation_id.
+
+----------------------------------------------------------------------
+PART 2: Full pipeline on a real (synthetic) academic PDF
+Source: data/test_documents/doc_1_simple.pdf
+----------------------------------------------------------------------
+
+STAGE 1 - Pages/paragraphs extracted: 30 paragraphs across 3 pages
+
+STAGE 2 - Sections detected:
+  Abstract -> page 1, paragraph 3
+  Introduction -> page 1, paragraph 5
+  Related Work -> page 1, paragraph 8
+  Methodology -> page 1, paragraph 11
+  Results -> page 2, paragraph 3
+  Discussion -> page 2, paragraph 5
+  Conclusion -> page 2, paragraph 7
+  References -> page 2, paragraph 9
+
+STAGE 3 - References extracted: 10 entries
+  [1] J. Doe, "Citation accuracy in scientific literature," Journal of Scientometrics, 2018.
+  [2] A. Lee and B. Kim, "How often do citations support their claims?," Proc. ACL, 2019.
+  [3] M. Chen, "A survey of citation misuse," Information Processing and Management, 2021.
+  ...
+
+STAGE 4 - In-text citations found: 8
+  cit_001 | numbered     | raw='[1]' | ref_ids=['1'] | page 1, para 6
+  cit_002 | numbered     | raw='[2, 3]' | ref_ids=['2', '3'] | page 1, para 6
+  cit_003 | author_year  | raw='(Smith et al., 2020)' | ref_ids=['Smith et al., 2020'] | page 1, para 6
+  cit_004 | numbered     | raw='[4]' | ref_ids=['4'] | page 1, para 7
+  cit_005 | numbered     | raw='[5, 6]' | ref_ids=['5', '6'] | page 1, para 7
+  cit_006 | numbered     | raw='[7]' | ref_ids=['7'] | page 1, para 9
+  cit_007 | numbered     | raw='[8]' | ref_ids=['8'] | page 1, para 9
+  cit_008 | numbered     | raw='[9, 10]' | ref_ids=['9', '10'] | page 1, para 10
+
+STAGE 5 - Claims extracted: 8
+  claim_001: "Citation misuse is a persistent problem in scientific writing."
+    linked citations: ['cit_001']
+  claim_002: "Prior studies have shown that a significant fraction of citations do not support the claims they are attached to."
+    linked citations: ['cit_002']
+  claim_003: "This finding has been replicated across multiple domains."
+    linked citations: ['cit_003']
+  claim_004: "Early approaches relied on simple lexical overlap between a claim and its cited source."
+    linked citations: ['cit_004']
+  claim_005: "More recent work uses neural entailment models to assess whether a source actually supports a claim."
+    linked citations: ['cit_005']
+  claim_006: "Evidence retrieval for fact verification has been studied extensively in the context of the FEVER shared task."
+    linked citations: ['cit_006']
+  claim_007: "Cross-encoder re-ranking has been shown to substantially improve retrieval precision over bag-of-words baselines."
+    linked citations: ['cit_007']
+  claim_008: "Natural language inference models, particularly those fine-tuned on MNLI, have become the standard tool for entailment-based verification."
+    linked citations: ['cit_008']
+
+----------------------------------------------------------------------
+FINAL OUTPUT: Claim-Citation Pairs (Week 1 Goal)
+----------------------------------------------------------------------
+[
+  {
+    "claim_id": "claim_001",
+    "claim": "Citation misuse is a persistent problem in scientific writing.",
+    "citation_id": "cit_001",
+    "page": 1,
+    "paragraph": 6
+  },
+  {
+    "claim_id": "claim_002",
+    "claim": "Prior studies have shown that a significant fraction of citations do not support the claims they are attached to.",
+    "citation_id": "cit_002",
+    "page": 1,
+    "paragraph": 6
+  },
+  {
+    "claim_id": "claim_003",
+    "claim": "This finding has been replicated across multiple domains.",
+    "citation_id": "cit_003",
+    "page": 1,
+    "paragraph": 6
+  },
+  {
+    "claim_id": "claim_004",
+    "claim": "Early approaches relied on simple lexical overlap between a claim and its cited source.",
+    "citation_id": "cit_004",
+    "page": 1,
+    "paragraph": 7
+  },
+  {
+    "claim_id": "claim_005",
+    "claim": "More recent work uses neural entailment models to assess whether a source actually supports a claim.",
+    "citation_id": "cit_005",
+    "page": 1,
+    "paragraph": 7
+  },
+  {
+    "claim_id": "claim_006",
+    "claim": "Evidence retrieval for fact verification has been studied extensively in the context of the FEVER shared task.",
+    "citation_id": "cit_006",
+    "page": 1,
+    "paragraph": 9
+  },
+  {
+    "claim_id": "claim_007",
+    "claim": "Cross-encoder re-ranking has been shown to substantially improve retrieval precision over bag-of-words baselines.",
+    "citation_id": "cit_007",
+    "page": 1,
+    "paragraph": 9
+  },
+  {
+    "claim_id": "claim_008",
+    "claim": "Natural language inference models, particularly those fine-tuned on MNLI, have become the standard tool for entailment-based verification.",
+    "citation_id": "cit_008",
+    "page": 1,
+    "paragraph": 10
+  }
+]
+
+Total: 8 claim-citation pairs produced from 1 PDF.
+
+----------------------------------------------------------------------
+Scope note: this module EXTRACTS and STRUCTURES claim-citation pairs.
+It does NOT verify whether a citation actually supports its claim --
+that is Evidence Retrieval + Verification (Jayant / Dhanush), later
+in the pipeline.
+----------------------------------------------------------------------
