@@ -1,6 +1,6 @@
 import type { AnalysisResponse } from '../types';
 
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 export const api = {
   /**
@@ -102,7 +102,7 @@ export const api = {
    */
   async checkHealth(): Promise<boolean> {
     try {
-      const response = await fetch('http://127.0.0.1:8000/health');
+      const response = await fetch(`${API_BASE_URL}/health`);
       return response.ok;
     } catch {
       return false;

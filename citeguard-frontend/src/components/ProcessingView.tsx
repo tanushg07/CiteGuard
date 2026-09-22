@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Check, Loader2, Circle, AlertTriangle, RefreshCw } from 'lucide-react';
 import type { AnalysisResponse, PipelineStep } from '../types';
-import { api } from '../services/api';
+import { api, API_BASE_URL } from '../services/api';
 
 interface ProcessingViewProps {
   params: {
@@ -29,10 +29,12 @@ const DEFAULT_STEPS: PipelineStep[] = [
 
 const ProcessingView: React.FC<ProcessingViewProps> = ({ params, onComplete, onError, onCancel }) => {
   const [steps, setSteps] = useState<PipelineStep[]>(DEFAULT_STEPS);
-  const [, setCurrentStepIdx] = useState<number>(0);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const hasExecutedRef = useRef(false);
+  const [attempt, setAttempt] = useState(0);
+  const callbacks = useRef({ onComplete, onError });
+  callbacks.current = { onComplete, onError };
+  const requestRef = useRef<{attempt: number; promise: Promise<any>} | null>(null);
 
   // Timer
   useEffect(() => {
@@ -42,114 +44,60 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({ params, onComplete, onE
     return () => clearInterval(timer);
   }, []);
 
-  // Step progression animation coupled with real API call
   useEffect(() => {
-    if (hasExecutedRef.current) return;
-    hasExecutedRef.current = true;
-
-    let isSubscribed = true;
-
-    const runAnalysis = async () => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const fail = (message: string) => {
+      if (!active) return;
+      setErrorMessage(message);
+      callbacks.current.onError(message);
+    };
+    // Reuse the submission during React StrictMode's effect replay.
+    if (!requestRef.current || requestRef.current.attempt !== attempt) {
+      const promise = params.type === 'pdf' && params.targetFile
+        ? api.verifyPDF(params.targetFile, params.sourceFiles || [])
+        : params.type === 'text' && params.targetText
+        ? api.analyzeText(params.targetText, params.documentTitle, params.sourceText, 'Referenced Source')
+        : api.runBenchmark();
+      requestRef.current = { attempt, promise };
+    }
+    const started = Date.now();
+    const poll = async (jobId: string) => {
       try {
-        let jobResponse: any;
-
-        if (params.type === 'pdf' && params.targetFile) {
-          jobResponse = await api.verifyPDF(params.targetFile, params.sourceFiles || []);
-        } else if (params.type === 'text' && params.targetText) {
-          jobResponse = await api.analyzeText(
-            params.targetText,
-            params.documentTitle,
-            params.sourceText,
-            'Referenced Source'
-          );
-        } else {
-          // benchmark might still return AnalysisResponse or job_id, assuming AnalysisResponse for now 
-          // or we can adjust benchmark to also use background tasks. Let's assume it still returns AnalysisResponse directly
-          // Actually, let's just leave benchmark as is.
-          const result = await api.runBenchmark();
-          if (isSubscribed) onComplete(result);
+        const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+        if (!response.ok) throw new Error('Unable to read analysis status.');
+        const message = await response.json();
+        if (!active) return;
+        if (message.status === 'completed') {
+          callbacks.current.onComplete(message.data);
           return;
         }
-
-        if (!isSubscribed) return;
-        
-        const jobId = jobResponse.job_id;
-        
-        // Connect to WebSocket
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        // Assuming API_BASE_URL is usually derived from window.location or hardcoded in api.ts
-        const wsUrl = `ws://127.0.0.1:8000/api/ws/${jobId}`;
-        const ws = new WebSocket(wsUrl);
-
-        ws.onmessage = (event) => {
-          if (!isSubscribed) {
-            ws.close();
-            return;
-          }
-          
-          const msg = JSON.parse(event.data);
-          
-          if (msg.status === 'update') {
-            const stepId = msg.data.step_id;
-            const status = msg.data.status; // 'loading', 'complete', 'error'
-            const detail = msg.data.detail;
-            
-            if (status === 'error') {
-               setErrorMessage(detail || "An error occurred during pipeline execution.");
-               onError(detail || "An error occurred");
-               ws.close();
-               return;
-            }
-            
-            setCurrentStepIdx(stepId - 1);
-            setSteps((old) =>
-              old.map((s) => {
-                if (s.id === stepId) {
-                  return { ...s, status, detail: detail || s.detail };
-                }
-                if (s.id < stepId) return { ...s, status: 'complete' };
-                return s;
-              })
-            );
-          } else if (msg.status === 'completed') {
-            setSteps((old) => old.map((s) => ({ ...s, status: 'complete' })));
-            setTimeout(() => {
-              if (isSubscribed) onComplete(msg.data);
-            }, 600);
-            ws.close();
-          } else if (msg.status === 'error') {
-            setErrorMessage(msg.message || 'Processing failed on the server.');
-            onError(msg.message || 'Processing failed.');
-            ws.close();
-          }
-        };
-
-        ws.onerror = (e) => {
-          if (!isSubscribed) return;
-          setErrorMessage('WebSocket connection failed.');
-          onError('WebSocket connection failed.');
-        };
-
-      } catch (err: any) {
-        if (!isSubscribed) return;
-        const msg = err.message || 'Verification failed to start. Please check the backend.';
-        setErrorMessage(msg);
-        onError(msg);
+        if (message.status === 'error') throw new Error(message.message);
+        if (message.status === 'update') {
+          const update = message.data;
+          setSteps(old => old.map(step => step.id === update.step_id
+            ? { ...step, status: update.status, detail: update.detail }
+            : step.id < update.step_id ? { ...step, status: 'complete' } : step));
+        }
+        if (Date.now() - started > 15 * 60 * 1000) throw new Error('Analysis timed out. Please retry.');
+        timer = setTimeout(() => { void poll(jobId); }, 750);
+      } catch (error) {
+        fail(error instanceof Error ? error.message : 'Analysis failed.');
       }
     };
-
-    runAnalysis();
-
-    return () => {
-      isSubscribed = false;
-    };
-  }, [params, onComplete, onError]);
+    requestRef.current.promise.then(result => {
+      if (!active) return;
+      if (result.status === 'completed') callbacks.current.onComplete(result);
+      else void poll(result.job_id);
+    }).catch(error => fail(error.message || 'Could not connect to backend.'));
+    return () => { active = false; clearTimeout(timer); };
+  }, [params, attempt]);
 
   const handleRetry = () => {
-    hasExecutedRef.current = false;
     setErrorMessage(null);
-    setCurrentStepIdx(0);
+    setElapsedSeconds(0);
     setSteps(DEFAULT_STEPS);
+    setAttempt(value => value + 1);
   };
 
   return (

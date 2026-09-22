@@ -41,7 +41,7 @@ const StatusPill: React.FC<{ status: Status; size?: 'sm' | 'md' }> = ({ status, 
       size === 'md' ? 'px-2.5 py-1 text-xs' : 'px-2 py-0.5 text-xs'
     }`}>
       {icons[status] || icons['Unrelated']}
-      {status}
+      {status === 'Unrelated' ? 'Insufficient evidence' : status}
     </span>
   );
 };
@@ -78,6 +78,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
 
   return (
     <div className="min-h-[calc(100vh-64px)] flex flex-col bg-[#F9FAFB]">
+      {data.warnings?.map(warning => <p key={warning} role="status" className="bg-amber-50 text-amber-900 border border-amber-200 rounded p-3 text-sm">{warning}</p>)}
       {/* Top Document Summary Banner */}
       <div className="bg-white border-b border-slate-200 px-8 py-5 shadow-2xs">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -172,7 +173,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
             <div className="flex flex-wrap gap-1.5">
               {['ALL', 'Supported', 'Contradicted', 'Numerical Mismatch', 'Unrelated'].map((status) => (
                 <button
-                  key={status}
+                  key={status === 'Unrelated' ? 'Insufficient evidence' : status}
                   onClick={() => setStatusFilter(status)}
                   className={`text-xs px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${
                     statusFilter === status
@@ -180,7 +181,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
                       : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  {status}
+                  {status === 'Unrelated' ? 'Insufficient evidence' : status}
                 </button>
               ))}
             </div>
@@ -296,7 +297,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
                     {selectedClaim.status === 'Unrelated' && 'Evidence Does Not Sufficiently Align'}
                   </div>
                   <p className="text-xs text-slate-500">
-                    Calculated using DistilBERT Multi-Genre Natural Language Inference (MNLI) and semantic cross-referencing.
+                    {data.engines?.verification === 'nli' ? 'DistilBERT MNLI prediction; confidence is a model score, not a guarantee.' : 'Conservative lexical baseline; neural verification did not run.'}
                   </p>
                 </div>
 
@@ -340,7 +341,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
                     </div>
                     <div className="text-[11px] text-slate-500">
                       {selectedClaim.numerical_comparison?.is_match
-                        ? 'All metrics extracted from claim matched source evidence.'
+                        ? 'Extracted values occur in evidence; this does not establish their context.'
                         : 'Discrepancy detected between claim numbers and source document numbers.'}
                     </div>
                   </div>
@@ -388,7 +389,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
 
                   {showAllEvidence && (
                     <div className="mt-3 space-y-2 border-t border-slate-800 pt-3">
-                      {selectedClaim.evidence_list.slice(1).map((ev, idx) => (
+                      {selectedClaim.evidence_list.filter(ev => ev.evidence_text !== selectedClaim.evidence || ev.source_document !== selectedClaim.source_document).map((ev, idx) => (
                         <div key={idx} className="p-3 bg-slate-800/60 rounded text-xs text-slate-300 space-y-1">
                           <div className="flex justify-between text-slate-400 text-[11px]">
                             <span>Candidate #{idx + 2} • {ev.source_document}</span>

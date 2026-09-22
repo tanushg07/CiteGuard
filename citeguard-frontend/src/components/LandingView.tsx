@@ -93,7 +93,7 @@ const LandingView: React.FC<LandingViewProps> = ({ onStartAnalysis }) => {
           className="inline-flex items-center space-x-1.5 text-slate-900 font-semibold hover:text-slate-700 bg-white border border-slate-300 hover:border-slate-400 px-3 py-1 rounded shadow-xs transition-colors cursor-pointer"
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-          <span>Load Standard Academic Benchmark</span>
+          <span>Run Synthetic Demo</span>
         </button>
       </div>
 
@@ -186,8 +186,8 @@ const LandingView: React.FC<LandingViewProps> = ({ onStartAnalysis }) => {
           <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-xs space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h4 className="text-sm font-semibold text-slate-900">Supplementary Reference PDFs (Optional)</h4>
-                <p className="text-xs text-slate-500">Attach cited source papers to verify claims against full external texts.</p>
+                <h4 className="text-sm font-semibold text-slate-900">Cited Source PDFs</h4>
+                <p className="text-xs text-slate-500">Attach the cited papers. For multiple sources, name files with citation markers, e.g. [2] Study.pdf. Without sources, claims have insufficient evidence.</p>
               </div>
               <label
                 htmlFor="source-pdfs-input"
@@ -278,7 +278,7 @@ const LandingView: React.FC<LandingViewProps> = ({ onStartAnalysis }) => {
                 rows={4}
                 value={sourceText}
                 onChange={(e) => setSourceText(e.target.value)}
-                placeholder="Paste the cited external study passage or bibliography text for cross-referencing..."
+                placeholder="Paste the actual passage from the cited source (not its bibliography entry)..."
                 className="w-full px-3 py-2 border border-slate-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-slate-900"
               />
             </div>

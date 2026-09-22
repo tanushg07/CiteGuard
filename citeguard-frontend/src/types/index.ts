@@ -44,6 +44,8 @@ export interface DocumentSummary {
 }
 
 export interface AnalysisResponse {
+  warnings?: string[];
+  engines?: Record<string, string>;
   job_id: string;
   summary: DocumentSummary;
   claims: Claim[];

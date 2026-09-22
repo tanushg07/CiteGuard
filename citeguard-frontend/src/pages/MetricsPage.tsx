@@ -60,7 +60,7 @@ const MetricsPage: React.FC = () => {
           <BarChart3 className="w-6 h-6 text-slate-700" />
           <span>System Evaluation & Metrics</span>
         </h1>
-        <p className="text-sm text-slate-500 mt-1">Quantitative performance on the golden standard benchmark.</p>
+        <p className="text-sm text-slate-500 mt-1">Controlled synthetic fixtures, not independently reviewed research results. Precision, recall and F1 use macro averaging.</p>
       </div>
 
       {/* Extraction Metrics */}
