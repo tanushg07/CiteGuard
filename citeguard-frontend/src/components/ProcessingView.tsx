@@ -1,3 +1,4 @@
+import ReportSkeleton from './ReportSkeleton';
 import React, { useEffect, useState, useRef } from 'react';
 import { Check, Loader2, Circle, AlertTriangle, RefreshCw } from 'lucide-react';
 import type { AnalysisResponse, PipelineStep } from '../types';
@@ -33,7 +34,7 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({ params, onComplete, onE
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const callbacks = useRef({ onComplete, onError });
-  callbacks.current = { onComplete, onError };
+  useEffect(() => { callbacks.current = { onComplete, onError }; }, [onComplete, onError]);
   const requestRef = useRef<{attempt: number; promise: Promise<any>} | null>(null);
 
   // Timer
@@ -209,6 +210,7 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({ params, onComplete, onE
             })}
           </div>
         )}
+        {!errorMessage && <ReportSkeleton />}
       </div>
     </div>
   );

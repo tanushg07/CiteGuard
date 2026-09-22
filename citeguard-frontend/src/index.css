@@ -10,3 +10,32 @@
     @apply bg-[#F9FAFB] text-slate-900 antialiased;
   }
 }
+
+button, a, input { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 3px solid #0d9488; outline-offset: 3px; }
+.report-overview { display: flex; align-items: center; gap: 24px; width: calc(100% - 48px); max-width: 1232px; margin: 24px auto 0; padding: 24px; background: white; border: 1px solid #e2e8f0; border-radius: 16px; box-shadow: 0 4px 24px #0f172a05; }
+.score-gauge { flex-shrink: 0; width: 104px; height: 104px; padding: 8px; border-radius: 50%; }
+.score-gauge > div { background: white; width: 100%; height: 100%; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+.score-gauge strong { font-size: 23px; letter-spacing: -1px; }
+.score-gauge span { font-size: 10px; color: #64748b; }
+.reference-badge { display: inline-flex; flex-wrap: wrap; gap: 8px; background: #f0fdfa; color: #115e59; border: 1px solid #99f6e4; padding: 5px 9px; border-radius: 6px; font-size: 11px; overflow-wrap: anywhere; }
+.reference-badge a { text-decoration: underline; }
+.claim-card { border-left: 4px solid #d97706; padding: 16px; transition: background .2s; }
+.claim-card.supported { border-left-color: #16a34a; }
+.claim-card.contradicted { border-left-color: #dc2626; }
+.claim-card:hover, .claim-card.selected { background: #f1f5f9; }
+.claim-expansion { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .25s ease, opacity .25s ease; }
+.claim-expansion.expanded { grid-template-rows: 1fr; opacity: 1; }
+.claim-expansion > div { overflow: hidden; }
+.overlap-mark { background: #ccfbf1; color: #115e59; padding: 0 2px; border-radius: 3px; }
+.toast-region { position: fixed; bottom: 24px; right: 24px; z-index: 100; max-width: min(420px, calc(100vw - 48px)); }
+.toast { display: flex; gap: 20px; align-items: center; padding: 16px 20px; border-radius: 12px; background: #14532d; color: white; box-shadow: 0 12px 40px #0f172a26; font-size: 14px; }
+.toast.error { background: #991b1b; }
+.toast button { cursor: pointer; font-size: 22px; }
+.report-skeleton { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 24px; }
+.skeleton-card { padding: 14px; border: 1px solid #e2e8f0; border-radius: 8px; }
+.skeleton-line { height: 8px; margin: 10px 0; border-radius: 4px; background: linear-gradient(90deg, #f1f5f9, #e2e8f0, #f1f5f9); background-size: 200% 100%; animation: shimmer 1.6s infinite; }
+.skeleton-line.short { width: 50%; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (max-width: 640px) { .report-overview { padding: 16px; gap: 16px; } .score-gauge { width: 88px; height: 88px; } .report-skeleton { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

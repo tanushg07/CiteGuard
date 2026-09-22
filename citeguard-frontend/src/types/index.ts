@@ -17,6 +17,8 @@ export interface NumericalComparison {
 }
 
 export interface Claim {
+  reasoning?: string;
+  reasoning_provider?: 'template' | 'groq';
   reference_metadata?: {
     raw_reference: string;
     provider: string;

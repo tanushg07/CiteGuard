@@ -1,3 +1,5 @@
+import ClaimCard, { OverlapText } from './ClaimCard';
+import DocumentSummary from './DocumentSummary';
 import React, { useState, useMemo } from 'react';
 import type { AnalysisResponse, Status } from '../types';
 import { api } from '../services/api';
@@ -152,10 +154,11 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
         </div>
       </div>
 
+      <DocumentSummary data={data} />
       {/* Main Workspace Layout */}
-      <div className="flex-1 flex overflow-hidden max-w-7xl w-full mx-auto p-6 gap-6">
+      <div className="flex-1 flex flex-col lg:flex-row max-w-7xl w-full mx-auto p-6 gap-6">
         {/* Left Sidebar: Extracted Claims List */}
-        <div className="w-96 flex flex-col bg-white border border-slate-200 rounded-lg shadow-xs overflow-hidden shrink-0">
+        <div className="w-full lg:w-80 flex flex-col bg-white border border-slate-200 rounded-lg shadow-xs overflow-hidden shrink-0">
           {/* Search & Filter Header */}
           <div className="p-4 border-b border-slate-200 space-y-3 bg-slate-50/50">
             <div className="relative">
@@ -211,34 +214,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
                 No claims match your filter criteria.
               </div>
             ) : (
-              filteredClaims.map((claim) => {
-                const isSelected = selectedClaim?.id === claim.id;
-                return (
-                  <div
-                    key={claim.id}
-                    onClick={() => setSelectedClaimId(claim.id)}
-                    className={`p-4 cursor-pointer transition-all ${
-                      isSelected
-                        ? 'bg-slate-50/80 border-l-4 border-l-slate-900'
-                        : 'hover:bg-slate-50/50 border-l-4 border-l-transparent'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">
-                        {claim.citation_marker || `Claim ${claim.id}`}
-                      </span>
-                      <StatusPill status={claim.status} />
-                    </div>
-                    <p className="text-xs text-slate-800 font-serif line-clamp-2 leading-relaxed">
-                      "{claim.text}"
-                    </p>
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100/60 text-[11px] text-slate-400">
-                      <span>Conf: {claim.confidence}%</span>
-                      <span className="truncate max-w-[140px]">{claim.source_document}</span>
-                    </div>
-                  </div>
-                );
-              })
+              filteredClaims.map(claim => <ClaimCard key={claim.id} claim={claim}
+                selected={selectedClaim?.id === claim.id} onSelect={() => { setSelectedClaimId(claim.id); setShowAllEvidence(false); }} />)
             )}
           </div>
         </div>
@@ -265,14 +242,14 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
                       {part}
                       {i < arr.length - 1 && (
                         <span className="bg-amber-100 text-slate-900 px-1 py-0.5 rounded font-medium border-b-2 border-amber-400">
-                          {selectedClaim.text}
+                          <OverlapText text={selectedClaim.text} other={selectedClaim.evidence} />
                         </span>
                       )}
                     </React.Fragment>
                   ))
                 ) : (
                   <span className="bg-amber-100 text-slate-900 px-1 py-0.5 rounded font-medium">
-                    {selectedClaim.text}
+                    <OverlapText text={selectedClaim.text} other={selectedClaim.evidence} />
                   </span>
                 )}
               </div>
@@ -301,6 +278,10 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
                   </p>
                 </div>
 
+                {selectedClaim.reasoning && <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm leading-relaxed">
+                  <p>{selectedClaim.reasoning}</p>
+                  <p className="mt-2 text-xs text-slate-500">{selectedClaim.reasoning_provider === 'groq' ? 'AI explanation · Groq' : 'Local explanation'}</p>
+                </div>}
                 {/* Confidence Bar */}
                 <div className="space-y-1.5 pt-2">
                   <div className="flex justify-between text-xs font-medium">
@@ -369,7 +350,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
               </div>
 
               <blockquote className="font-serif text-base leading-relaxed text-slate-100 bg-slate-800/40 p-4 rounded border-l-4 border-slate-600">
-                "{selectedClaim.evidence}"
+                <OverlapText text={selectedClaim.evidence} other={selectedClaim.text} />
               </blockquote>
 
               {/* Additional Candidate Evidence toggle */}
@@ -408,8 +389,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ data, onReset }) => {
               <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-2 text-sm">
                 <h3 className="font-semibold">Reference metadata</h3>
                 <p className="text-xs text-slate-500">
-                  {selectedClaim.reference_metadata.provider === 'semantic_scholar'
-                    ? 'Enriched by Semantic Scholar. Metadata is not verification evidence.'
+                  {selectedClaim.reference_metadata.status === 'enriched'
+                    ? `Enriched by ${selectedClaim.reference_metadata.provider === 'crossref' ? 'Crossref' : 'Semantic Scholar'}. Metadata is not verification evidence.`
                     : `Bibliography fallback (${selectedClaim.reference_metadata.status.replaceAll('_', ' ')}).`}
                 </p>
                 {selectedClaim.reference_metadata.title && <p>{selectedClaim.reference_metadata.title}</p>}

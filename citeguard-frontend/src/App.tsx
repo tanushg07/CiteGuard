@@ -1,3 +1,5 @@
+import Toast from './components/Toast';
+import { notify } from './services/notifications';
 import { useState } from 'react';
 import LandingView from './components/LandingView';
 import ProcessingView from './components/ProcessingView';
@@ -29,6 +31,7 @@ function App() {
 
   const handleProcessingComplete = (data: AnalysisResponse) => {
     setResults(data);
+    notify(`Analysis complete: ${data.summary.total_claims} claims reviewed.`);
     setView('dashboard');
   };
 
@@ -40,6 +43,7 @@ function App() {
 
   return (
     <div className="font-sans text-slate-900 bg-[#F9FAFB] min-h-screen flex flex-col">
+      <Toast />
       {/* Global Academic Navigation Bar */}
       <nav className="bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between sticky top-0 z-50">
         <div 
@@ -93,7 +97,7 @@ function App() {
             params={params}
             onComplete={handleProcessingComplete}
             onError={(err) => {
-              console.error('Analysis error:', err);
+              notify(err, 'error');
               // Do NOT reset to landing — ProcessingView shows the error inline with Retry button
             }}
             onCancel={handleReset}
