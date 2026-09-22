@@ -15,11 +15,11 @@ class Extractor:
 
     def __init__(self):
         # Bracketed numbers: [1], [1, 2], [1-3], [12, 14, 18]
-        self.bracket_pattern = re.compile(r"\[\s*\d+(?:\s*[,-]\s*\d+)*\s*\]")
+        self.bracket_pattern = re.compile(r"\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]")
         # Author-year: (Smith, 2020), (Smith et al., 2020), (Alon and Yahav, 2021)
         self.author_year_pattern = re.compile(r"\([A-Za-z\s]+(?:et al\.)?,\s*\d{4}[a-z]?\)")
         # Inline: Vaswani et al. (2017)
-        self.inline_author_year = re.compile(r"\b[A-Za-z\s]+(?:et al\.)?\s*\(\d{4}[a-z]?\)")
+        self.inline_author_year = re.compile(r"\b[A-Z][a-zA-Z\-]+(?:\s+(?:et al\.|and [A-Z][a-zA-Z]+))?\s*\(\d{4}[a-z]?\)")
 
     def _split_sentences(self, text: str) -> List[str]:
         """Splits paragraph into sentences using period/question/exclamation boundaries."""
@@ -90,23 +90,24 @@ class Extractor:
                 if not self._has_citation(sentence):
                     continue
 
-                # Deduplicate: the same sentence should not become multiple claims
-                norm = " ".join(sentence.lower().split())
-                if norm in seen_sentences:
-                    continue
-                seen_sentences.add(norm)
-
-                marker = self._primary_marker(sentence)
-                claim_id = f"claim_{uuid.uuid4().hex[:8]}"
-                pairs.append(
-                    ClaimCitationPair(
-                        id=claim_id,
-                        text=sentence,
-                        context=para_text,
-                        citation_marker=marker,
-                        page_number=page_number,
-                        section=section,
-                    )
-                )
-
+                markers = []
+                for pattern in (self.bracket_pattern, self.author_year_pattern, self.inline_author_year):
+                    for match in pattern.finditer(sentence):
+                        marker = match.group(0)
+                        if marker.startswith('['):
+                            for part in marker[1:-1].split(','):
+                                nums = re.findall(r'\d+', part)
+                                if len(nums) == 2:
+                                    markers.extend(f'[{n}]' for n in range(int(nums[0]), min(int(nums[1]), int(nums[0]) + 100) + 1))
+                                else:
+                                    markers.append(f'[{nums[0]}]')
+                        else:
+                            markers.append(marker)
+                for marker in dict.fromkeys(markers):
+                    key = (sentence, marker, page_number)
+                    if key in seen_sentences:
+                        continue
+                    seen_sentences.add(key)
+                    pairs.append(ClaimCitationPair(id=f'claim_{len(pairs)+1:04d}', text=sentence,
+                        context=para_text, citation_marker=marker, page_number=page_number, section=section))
         return pairs

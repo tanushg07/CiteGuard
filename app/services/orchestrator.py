@@ -1,3 +1,5 @@
+import os
+import copy
 import time
 import uuid
 import logging
@@ -27,16 +29,18 @@ class Orchestrator:
     CiteGuard Pipeline Orchestrator.
     Executes the 7-step citation verification pipeline end-to-end with real-time telemetry.
     """
-    def __init__(self):
+    def __init__(self, use_models=None):
         self.parser = DocumentParser()
         self.extractor = Extractor()
-        self.retriever = Retriever(use_reranker=True)
-        self.verifier = Verifier(use_nli=True)
+        self.use_models = use_models if use_models is not None else os.getenv("CITEGUARD_MODE", "neural") == "neural"
+        self.retriever = Retriever(use_reranker=False)
+        self.verifier = Verifier(use_nli=False)
     async def run_pipeline(
         self,
         target_path: Optional[str] = None,
         target_text: Optional[str] = None,
         source_paths: Optional[List[str]] = None,
+        source_names: Optional[List[str]] = None,
         source_texts: Optional[List[Dict[str, str]]] = None,
         document_title: str = "Uploaded Document",
         progress_callback: Optional[Callable[[PipelineStepUpdate], Awaitable[None]]] = None,
@@ -46,6 +50,13 @@ class Orchestrator:
         Runs the full 7-step pipeline asynchronously.
         """
         start_time = time.time()
+        retriever = await asyncio.to_thread(Retriever, self.use_models, self.retriever.chunk_size, self.retriever.top_k)
+        verifier = await asyncio.to_thread(Verifier, self.use_models, self.verifier.entailment_threshold, self.verifier.contradiction_threshold)
+        warnings = []
+        if not verifier.use_nli:
+            warnings.append("NLI unavailable: conservative lexical baseline used; results are not neural verification.")
+        if not retriever.use_reranker:
+            warnings.append("Cross-encoder unavailable: lexical ranking used.")
         job_id = job_id or f"job_{uuid.uuid4().hex[:10]}"
 
         async def notify(step_id: int, name: str, status: str, detail: str = "", claims_found: int = 0, pct: int = 0):
@@ -69,7 +80,7 @@ class Orchestrator:
             
             if target_path:
                 parsed_doc = await asyncio.wait_for(asyncio.to_thread(self.parser.parse, target_path), timeout=60.0)
-                doc_name = parsed_doc.get("document_name", document_title)
+                doc_name = document_title
             elif target_text:
                 parsed_doc = await asyncio.wait_for(asyncio.to_thread(self.parser.parse_text, target_text, document_title), timeout=60.0)
                 doc_name = document_title
@@ -86,20 +97,6 @@ class Orchestrator:
         
             claims = await asyncio.to_thread(self.extractor.extract, paragraphs)
         
-            # If no claims found from regex in short text, create fallback claim from paragraphs if present
-            if not claims and paragraphs:
-                # Fallback for plain sentences
-                for i, p in enumerate(paragraphs[:3]):
-                    if len(p["text"]) > 30:
-                        claims.append(ClaimCitationPair(
-                            id=f"c_fb_{i}",
-                            text=p["text"],
-                            context=p["text"],
-                            citation_marker="[1]",
-                            page_number=p.get("page_number", 1),
-                            section=p.get("section", "Body")
-                        ))
-                    
             await notify(2, "Claim Extraction", "complete", f"Identified {len(claims)} claim-citation pairs for verification.", claims_found=len(claims), pct=35)
 
             # Step 3: Source Identification
@@ -109,17 +106,17 @@ class Orchestrator:
 
             # Ingest uploaded source files
             if source_paths:
-                for s_path in source_paths:
+                for source_index, s_path in enumerate(source_paths):
                     try:
                         s_parsed = await asyncio.wait_for(asyncio.to_thread(self.parser.parse, s_path), timeout=60.0)
-                        s_text = "\n\n".join([p["text"] for p in s_parsed.get("paragraphs", [])])
-                        sources_to_index.append({
-                            "name": s_parsed.get("document_name", "Source PDF"),
-                            "text": s_text,
-                            "citation": s_parsed.get("document_name", "Source PDF")
-                        })
+                        for paragraph in s_parsed.get('paragraphs', []):
+                            sources_to_index.append({
+                                'name': source_names[source_index] if source_names else s_parsed.get('document_name', 'Source PDF'),
+                                'text': paragraph['text'],
+                                'page_number': paragraph['page_number'],
+                            })
                     except Exception as e:
-                        logger.warning(f"Failed to parse source file {s_path}: {e}")
+                        raise ValueError(f"Could not read uploaded source: {e}") from e
 
             # Ingest text sources
             if source_texts:
@@ -127,38 +124,39 @@ class Orchestrator:
                     sources_to_index.append({
                         "name": st.get("name", "Referenced Paper"),
                         "text": st.get("text", ""),
-                        "citation": st.get("citation", st.get("name", "Referenced Paper"))
+                        "citation": st.get("citation", st.get("name", "Referenced Paper")),
+                        "markers": st.get("markers", [])
                     })
 
-            # If references were extracted from the document itself, include them in source index
-            if references:
-                ref_text = "\n\n".join(references)
-                sources_to_index.append({
-                    "name": f"{doc_name} (References Section)",
-                    "text": ref_text,
-                    "citation": "Manuscript Bibliography"
-                })
-
-            # If no separate sources provided, use document body as baseline self-contained corpus
             if not sources_to_index:
-                doc_body = "\n\n".join([p["text"] for p in paragraphs])
-                sources_to_index.append({
-                    "name": f"{doc_name} (Context Base)",
-                    "text": doc_body,
-                    "citation": doc_name
-                })
+                warnings.append("No source documents supplied. Upload cited sources to verify claims.")
+            # Each claim searches only explicitly mapped sources. A sole source is
+            # the user's selected source; multiple sources require a marker/title match.
+            from app.services.sources import sources_for_claim
+            claim_sources = {c.id: sources_for_claim(c, sources_to_index, references) for c in claims}
+            await asyncio.to_thread(retriever.add_sources, sources_to_index)
+            if any(not selected for selected in claim_sources.values()) and sources_to_index:
+                warnings.append("Some citations could not be mapped. Name source PDFs with their marker, e.g. [2] Study.pdf, or bibliography title.")
+            if not claims:
+                warnings.append("No supported citation formats were detected. No citations were invented.")
 
-            self.retriever.clear()
-            await asyncio.to_thread(self.retriever.add_sources, sources_to_index)
-
-            await notify(3, "Source Identification", "complete", f"Indexed {len(sources_to_index)} source corpora with {len(self.retriever.chunks)} evidence passages.", claims_found=len(claims), pct=55)
+            await notify(3, "Source Identification", "complete", f"Indexed {len(sources_to_index)} source corpora with {len(retriever.chunks)} evidence passages.", claims_found=len(claims), pct=55)
 
             # Step 4: Evidence Retrieval
             await notify(4, "Evidence Retrieval", "loading", "Retrieving candidate evidence passages via BM25/TF-IDF...", claims_found=len(claims), pct=65)
         
             retrieved_map: Dict[str, List[RetrievedEvidence]] = {}
-            for claim in claims:
-                candidates = await asyncio.to_thread(self.retriever.retrieve, claim, 3, 10)
+            indexes = {}
+            for index, claim in enumerate(claims, 1):
+                await notify(4, "Evidence Retrieval", "loading", f"Retrieving evidence for citation {index}/{len(claims)}...", claims_found=len(claims), pct=65)
+                selected = claim_sources[claim.id]
+                key = tuple((source["name"], source["text"], source.get("page_number", 1)) for source in selected)
+                if key not in indexes:
+                    local = copy.copy(retriever)
+                    await asyncio.to_thread(local.add_sources, selected)
+                    indexes[key] = local
+                local = indexes[key]
+                candidates = await asyncio.to_thread(local.retrieve, claim, local.top_k, max(10, local.top_k)) if local.chunks else []
                 retrieved_map[claim.id] = candidates
 
             await notify(4, "Evidence Retrieval", "complete", f"Retrieved candidate passages for all {len(claims)} claims.", claims_found=len(claims), pct=75)
@@ -166,18 +164,19 @@ class Orchestrator:
             # Step 5: Cross-Encoder Re-ranking
             await notify(5, "Cross-Encoder Re-ranking", "loading", "Computing fine-grained semantic alignment scores...", claims_found=len(claims), pct=80)
             # Reranking is integrated into retriever.retrieve(); simulate fast validation checkpoint
-            await notify(5, "Cross-Encoder Re-ranking", "complete", "Top-1 passage selected per claim.", claims_found=len(claims), pct=85)
+            await notify(5, "Cross-Encoder Re-ranking", "complete", "Cross-encoder ranking complete." if retriever.use_reranker else "Lexical ranking only (cross-encoder unavailable).", claims_found=len(claims), pct=85)
 
             # Step 6: NLI Verification
             await notify(6, "NLI Verification", "loading", "Evaluating textual entailment, contradiction, and neutral alignment...", claims_found=len(claims), pct=90)
 
             verified_results: List[VerificationResult] = []
-            for claim in claims:
+            for index, claim in enumerate(claims, 1):
+                await notify(6, "NLI Verification", "loading", f"Verifying citation {index}/{len(claims)}...", claims_found=len(claims), pct=90)
                 ev_list = retrieved_map.get(claim.id, [])
-                v_res = await asyncio.to_thread(self.verifier.verify, claim, ev_list)
+                v_res = await asyncio.to_thread(verifier.verify, claim, ev_list)
                 verified_results.append(v_res)
 
-            await notify(6, "NLI Verification", "complete", "NLI inference complete.", claims_found=len(claims), pct=95)
+            await notify(6, "NLI Verification", "complete", "NLI inference complete." if verifier.use_nli else "Conservative baseline complete; NLI unavailable.", claims_found=len(claims), pct=95)
 
             # Step 7: Numerical Verification & Summary
             await notify(7, "Numerical Verification", "loading", "Cross-referencing statistical values, metrics, and percentages...", claims_found=len(claims), pct=98)
@@ -209,7 +208,9 @@ class Orchestrator:
                 job_id=job_id,
                 summary=summary,
                 claims=verified_results,
-                status="completed"
+                status="completed",
+                warnings=warnings,
+                engines={"retrieval": "bm25+tfidf", "reranker": "cross-encoder" if retriever.use_reranker else "lexical", "verification": "nli" if verifier.use_nli else "baseline"}
             )
 
             JOB_STORE[job_id] = response

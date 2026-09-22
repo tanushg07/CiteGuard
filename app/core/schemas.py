@@ -24,6 +24,7 @@ class NumericalComparison(BaseModel):
     details: Optional[str] = Field(default=None)
 
 class RetrievedEvidence(BaseModel):
+    page_number: int = 1
     claim_id: str = Field(..., description="The ID of the claim this evidence is for")
     source_document: str = Field(..., description="The name or identifier of the source document")
     evidence_text: str = Field(..., description="The retrieved chunk of text from the source")
@@ -83,6 +84,8 @@ class AnalysisResponse(BaseModel):
     summary: DocumentSummary
     claims: List[VerificationResult]
     status: str = "completed"
+    warnings: List[str] = Field(default_factory=list)
+    engines: Dict[str, str] = Field(default_factory=dict)
 
 class PipelineStepUpdate(BaseModel):
     step_id: int

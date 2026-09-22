@@ -1,341 +1,190 @@
-import os
-import io
-import csv
-import json
+"""Asynchronous jobs with replayable state and persisted results."""
 import asyncio
+import csv
+import io
+import json
 import tempfile
 import uuid
-import logging
-from typing import List, Optional
-from fastapi import APIRouter, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
-from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel
-
-from app.core.schemas import (
-    AnalysisResponse,
-    PipelineStepUpdate,
-    VerificationLabel,
-)
+from pathlib import Path
+from typing import Optional
+from fastapi import APIRouter, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from app.services.orchestrator import Orchestrator, JOB_STORE
 from app.evaluation.evaluator import CiteGuardEvaluator
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 orchestrator = Orchestrator()
+ROOT = Path(__file__).resolve().parents[2]
+JOBS = ROOT / 'data' / 'jobs'
+STATES = {}
+TASKS = set()
+MAX_BYTES = 25 * 1024 * 1024
 
-# Active WebSocket connections by job_id
-ACTIVE_CONNECTIONS: dict[str, list[WebSocket]] = {}
-
+class SourceText(BaseModel):
+    name: str
+    text: str
+    markers: list[str] = Field(default_factory=list)
 
 class TextAnalysisRequest(BaseModel):
-    document_title: str = "Pasted Academic Text"
-    target_text: str
-    source_title: Optional[str] = "Referenced Paper"
-    source_text: Optional[str] = None
+    document_title: str = 'Pasted Academic Text'
+    target_text: str = Field(max_length=2_000_000)
+    source_title: Optional[str] = 'Referenced Paper'
+    source_text: Optional[str] = Field(default=None, max_length=2_000_000)
+    sources: list[SourceText] = Field(default_factory=list)
 
 
-class JobResponse(BaseModel):
-    job_id: str
+def persist(job_id, state):
+    JOBS.mkdir(parents=True, exist_ok=True)
+    temporary = JOBS / f'{job_id}.tmp'
+    temporary.write_text(json.dumps(state), encoding='utf-8')
+    temporary.replace(JOBS / f'{job_id}.json')
 
 
-async def _broadcast(job_id: str, payload: dict):
-    """Send a JSON payload to all WebSocket clients connected to this job."""
-    if job_id not in ACTIVE_CONNECTIONS:
-        return
-    dead = []
-    for ws in ACTIVE_CONNECTIONS[job_id]:
-        try:
-            await ws.send_json(payload)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        ACTIVE_CONNECTIONS[job_id].remove(ws)
+def state_for(job_id):
+    if not __import__('re').fullmatch(r'job_[a-f0-9]{10}', job_id):
+        raise HTTPException(404, 'Analysis job not found.')
+    if job_id in STATES:
+        return STATES[job_id]
+    path = JOBS / f'{job_id}.json'
+    if path.exists():
+        state = json.loads(path.read_text(encoding='utf-8'))
+        if state['status'] not in ('completed', 'error'):
+            state = {'status': 'error', 'message': 'Server restarted during analysis. Please retry.'}
+        return state
+    raise HTTPException(404, 'Analysis job not found.')
 
 
-async def _run_pipeline_async(
-    job_id: str,
-    target_path: Optional[str] = None,
-    source_paths: Optional[List[str]] = None,
-    document_title: str = "Uploaded Document",
-    target_text: Optional[str] = None,
-    source_texts: Optional[List[dict]] = None,
-):
-    """
-    Coroutine that drives the pipeline on the running event loop.
-    This is scheduled via asyncio.ensure_future from an endpoint so it
-    runs concurrently without blocking, and can safely await WebSocket sends.
-    """
+async def run_job(job_id, cleanup, kwargs):
     try:
-        async def progress_callback(update: PipelineStepUpdate):
-            await _broadcast(job_id, {"status": "update", "data": update.dict()})
-
-        response = await orchestrator.run_pipeline(
-            target_path=target_path,
-            target_text=target_text,
-            source_paths=source_paths,
-            source_texts=source_texts,
-            document_title=document_title,
-            progress_callback=progress_callback,
-            job_id=job_id,
-        )
-
-        await _broadcast(job_id, {"status": "completed", "data": response.dict()})
-
-    except Exception as e:
-        logger.exception(f"[{job_id}] Pipeline failed: {e}")
-        await _broadcast(job_id, {"status": "error", "message": f"Pipeline Error: {str(e)}"})
-
+        async def progress(update):
+            STATES[job_id] = {'status': 'update', 'data': update.model_dump()}
+        result = await orchestrator.run_pipeline(job_id=job_id, progress_callback=progress, **kwargs)
+        STATES[job_id] = {'status': 'completed', 'data': result.model_dump(mode='json')}
+    except Exception as exc:
+        STATES[job_id] = {'status': 'error', 'message': str(exc)}
     finally:
-        # Clean up temp files
-        for path in (source_paths or []):
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-        if target_path and os.path.exists(target_path):
-            try:
-                os.remove(target_path)
-            except OSError:
-                pass
+        persist(job_id, STATES[job_id])
+        for path in cleanup:
+            Path(path).unlink(missing_ok=True)
 
 
-@router.post("/verify", response_model=JobResponse)
-async def verify_documents(
-    target_file: UploadFile = File(..., description="Target academic manuscript PDF"),
-    source_files: List[UploadFile] = File(default=[], description="Optional cited source PDFs"),
-):
-    """
-    Main verification endpoint: Ingests target manuscript PDF and optional source PDFs,
-    executes the 7-step citation verification pipeline, and returns a job_id.
-    Connect to /api/ws/{job_id} immediately after to receive real-time progress.
-    """
-    if not target_file.filename or not target_file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Target document must be a PDF file.")
-
-    try:
-        # Save target file to temp
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_target:
-            content = await target_file.read()
-            tmp_target.write(content)
-            target_path = tmp_target.name
-
-        # Save source files to temp if provided
-        source_paths: List[str] = []
-        for s_file in source_files:
-            if s_file.filename and s_file.filename.lower().endswith(".pdf"):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_source:
-                    s_content = await s_file.read()
-                    tmp_source.write(s_content)
-                    source_paths.append(tmp_source.name)
-
-        job_id = f"job_{uuid.uuid4().hex[:10]}"
-
-        # Schedule the async pipeline coroutine on the running event loop.
-        # This is the CORRECT way to run an async background task in FastAPI
-        # without breaking WebSocket communication.
-        asyncio.ensure_future(
-            _run_pipeline_async(
-                job_id=job_id,
-                target_path=target_path,
-                source_paths=source_paths or None,
-                document_title=target_file.filename,
-            )
-        )
-
-        return {"job_id": job_id}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Pipeline initiation failed: {str(e)}")
+def submit(cleanup=(), **kwargs):
+    job_id = f'job_{uuid.uuid4().hex[:10]}'
+    STATES[job_id] = {'status': 'queued'}
+    persist(job_id, STATES[job_id])
+    task = asyncio.create_task(run_job(job_id, cleanup, kwargs))
+    TASKS.add(task)
+    task.add_done_callback(TASKS.discard)
+    return {'job_id': job_id}
 
 
-@router.post("/analyze-text", response_model=JobResponse)
+@router.get('/health')
+def health():
+    return {'status': 'healthy', 'mode': 'neural' if orchestrator.use_models else 'baseline'}
+
+
+@router.post('/analyze-text', status_code=202)
 async def analyze_text(request: TextAnalysisRequest):
-    """
-    Direct text analysis endpoint: Useful for instant testing, manual snippet submission,
-    or pre-parsed LaTeX/plain text.
-    """
     if not request.target_text.strip():
-        raise HTTPException(status_code=400, detail="Target text cannot be empty.")
-
-    source_texts = []
+        raise HTTPException(400, 'Target text cannot be empty.')
+    sources = [s.model_dump() for s in request.sources]
     if request.source_text and request.source_text.strip():
-        source_texts.append({
-            "name": request.source_title or "Referenced Document",
-            "text": request.source_text,
-            "citation": request.source_title or "Referenced Document",
-        })
-
-    job_id = f"job_{uuid.uuid4().hex[:10]}"
-
-    asyncio.ensure_future(
-        _run_pipeline_async(
-            job_id=job_id,
-            target_text=request.target_text,
-            source_texts=source_texts or None,
-            document_title=request.document_title,
-        )
-    )
-
-    return {"job_id": job_id}
+        sources.append({'name': request.source_title or 'Referenced Source', 'text': request.source_text})
+    return submit(target_text=request.target_text, source_texts=sources, document_title=request.document_title)
 
 
-@router.get("/benchmark", response_model=AnalysisResponse)
-async def run_benchmark():
-    """
-    Executes a comprehensive academic benchmark verifying 5 diverse claims.
-    Runs the full pipeline synchronously and returns the complete result.
-    """
-    target_manuscript = """
-    Section 1: Introduction and Prior Work
-
-    The efficiency of modern deep learning architectures has become paramount. Specifically, training time was reduced by 40% when utilizing the novel sparse attention mechanism compared to the standard dense transformer baseline [12], corroborating earlier findings in scalable self-attention.
-
-    Section 2: Environmental Vulnerability
-
-    Coastal vulnerability models must account for extreme bounds of climate projections. Recent IPCC assessments indicate that global mean sea level is projected to rise by 2.5 meters by the year 2100 under the RCP8.5 emission scenario [4], necessitating immediate adaptive infrastructure planning.
-
-    Section 3: Clinical Findings
-
-    Previous pharmacological interventions yielded mixed results. However, in the latest Phase II clinical trial, the administration of 50mg of Compound X daily showed no statistically significant reduction in systemic inflammation markers after 6 weeks [21].
-
-    Section 4: Structural Graph Bottlenecks
-
-    While structurally expressive, message-passing architectures possess inherent limitations. Graph Neural Networks (GNNs) naturally struggle to capture long-range dependencies due to the over-squashing phenomenon [8], where exponential information is compressed into fixed-size vectors.
-
-    Section 5: Macroeconomic Observations
-
-    Historical precedents of market volatility show varied recovery trajectories. For instance, the economic impact of the 2008 financial crisis resulted in a 5% contraction of global GDP in the subsequent fiscal year [33], a figure that took nearly half a decade to recover.
-    """
-
-    source_corpora = [
-        {
-            "name": "Vaswani et al., 2017. Attention Is All You Need. arXiv:1706.03762.",
-            "text": "In our experiments with sparse attention on the WMT 2014 English-to-German translation task, the model achieved comparable BLEU scores while reducing overall training time by exactly 40% relative to the dense self-attention baseline.",
-        },
-        {
-            "name": "IPCC, 2021: Climate Change 2021: The Physical Science Basis.",
-            "text": "Under the highest emission scenario (RCP8.5), global mean sea level rise is projected to be likely in the range of 0.63–1.01 meters by 2100. A rise approaching 2 meters cannot be ruled out due to deep uncertainty in ice-sheet processes, but 2.5 meters is not supported by current modeling consensus.",
-        },
-        {
-            "name": "Smith & Jones (2023). Efficacy of Compound X in Autoimmune Disorders.",
-            "text": "Over the 6-week trial period, patients receiving a 50mg daily dose of Compound X exhibited a marked, statistically significant decrease (p < 0.01) in key systemic inflammation markers, notably C-reactive protein (CRP) and Interleukin-6 (IL-6), compared to the placebo group.",
-        },
-        {
-            "name": "Alon and Yahav (2021). On the Bottleneck of Graph Neural Networks and its Practical Implications.",
-            "text": "We demonstrate that the primary bottleneck in standard message-passing GNNs is the over-squashing effect. When the computation graph expands exponentially with depth, the model fails to propagate information across distant nodes without significant loss, directly limiting the capture of long-range dependencies.",
-        },
-        {
-            "name": "World Bank Group (2009). Global Economic Prospects: Crisis, Finance, and Growth.",
-            "text": "The report details the regulatory failures that precipitated the 2008 housing market collapse, emphasizing the lack of oversight in derivative markets and subprime mortgage lending practices.",
-        },
-    ]
-
-    response = await orchestrator.run_pipeline(
-        target_text=target_manuscript,
-        source_texts=source_corpora,
-        document_title="Sample_Academic_Evaluation_Benchmark.pdf",
-    )
-    return response
+@router.post('/verify', status_code=202)
+async def verify_documents(target_file: UploadFile = File(...), source_files: list[UploadFile] = File(default=[])):
+    paths = []
+    try:
+        if len(source_files) > 30:
+            raise HTTPException(400, 'At most 30 source PDFs are allowed.')
+        for upload in [target_file, *source_files]:
+            if not upload.filename or not upload.filename.lower().endswith('.pdf'):
+                raise HTTPException(400, 'All documents must be PDF files.')
+            content = await upload.read(MAX_BYTES + 1)
+            if len(content) > MAX_BYTES:
+                raise HTTPException(413, 'Each PDF must be at most 25 MB.')
+            if not content.startswith(b'%PDF-'):
+                raise HTTPException(400, 'Invalid PDF content.')
+            # Retain original names for source matching, without trusting filesystem paths.
+            with tempfile.NamedTemporaryFile(delete=False, suffix='_' + Path(upload.filename.replace('\\', '/')).name) as temp:
+                temp.write(content)
+                paths.append(temp.name)
+        return submit(cleanup=paths, target_path=paths[0], source_paths=paths[1:], source_names=[Path(f.filename.replace('\\', '/')).name for f in source_files], document_title=target_file.filename)
+    except Exception:
+        for path in paths:
+            Path(path).unlink(missing_ok=True)
+        raise
 
 
-@router.get("/results/{job_id}", response_model=AnalysisResponse)
-async def get_results(job_id: str):
-    """Retrieves previous analysis results by job ID."""
-    if job_id not in JOB_STORE:
-        raise HTTPException(status_code=404, detail="Analysis job not found.")
-    return JOB_STORE[job_id]
+@router.get('/jobs/{job_id}')
+def get_job(job_id: str):
+    return state_for(job_id)
 
 
-@router.get("/export/{job_id}")
-async def export_results(job_id: str, format: str = "json"):
-    """Exports verification results as structured JSON or CSV."""
-    if job_id not in JOB_STORE:
-        raise HTTPException(status_code=404, detail="Analysis job not found.")
-
-    job = JOB_STORE[job_id]
-
-    if format.lower() == "csv":
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow([
-            "Claim ID",
-            "Citation Marker",
-            "Claim Text",
-            "Status",
-            "Confidence (%)",
-            "Source Document",
-            "Retrieved Evidence",
-            "Numerical Alignment",
-        ])
-        for c in job.claims:
-            writer.writerow([
-                c.id,
-                c.citation_marker,
-                c.text,
-                c.status.value,
-                c.confidence,
-                c.source_document,
-                c.evidence,
-                c.numerical_check or "N/A",
-            ])
-        output.seek(0)
-        return StreamingResponse(
-            io.BytesIO(output.getvalue().encode("utf-8")),
-            media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="citeguard_report_{job_id}.csv"'},
-        )
-    else:
-        return JSONResponse(
-            content=job.dict(),
-            headers={"Content-Disposition": f'attachment; filename="citeguard_report_{job_id}.json"'},
-        )
+@router.get('/results/{job_id}')
+def get_results(job_id: str):
+    state = state_for(job_id)
+    if state['status'] == 'error':
+        raise HTTPException(422, state['message'])
+    if state['status'] != 'completed':
+        raise HTTPException(409, 'Analysis is still processing.')
+    return state['data']
 
 
-@router.websocket("/ws/{job_id}")
-async def websocket_pipeline_progress(websocket: WebSocket, job_id: str):
-    """
-    WebSocket endpoint streaming pipeline step updates and final status.
-    The client must connect to this endpoint immediately after POSTing to /verify.
-    All pipeline progress events are pushed here in real time.
-    """
+@router.get('/export/{job_id}')
+def export(job_id: str, format: str = 'json'):
+    data = get_results(job_id)
+    if format == 'json':
+        return Response(json.dumps(data, indent=2), media_type='application/json', headers={'Content-Disposition': f'attachment; filename={job_id}.json'})
+    if format != 'csv':
+        raise HTTPException(400, 'Format must be json or csv.')
+    output = io.StringIO()
+    writer = csv.writer(output)
+    fields = ['id', 'citation_marker', 'text', 'status', 'confidence', 'source_document', 'evidence', 'numerical_check']
+    writer.writerow(fields)
+    for claim in data['claims']:
+        writer.writerow([str(claim.get(f) or '') for f in fields])
+    return Response(output.getvalue(), media_type='text/csv', headers={'Content-Disposition': f'attachment; filename={job_id}.csv'})
+
+
+@router.websocket('/ws/{job_id}')
+async def progress_socket(websocket: WebSocket, job_id: str):
     await websocket.accept()
-    if job_id not in ACTIVE_CONNECTIONS:
-        ACTIVE_CONNECTIONS[job_id] = []
-    ACTIVE_CONNECTIONS[job_id].append(websocket)
-
-    # If the job is already done (client reconnected), push result immediately
-    if job_id in JOB_STORE:
-        try:
-            await websocket.send_json({"status": "completed", "data": JOB_STORE[job_id].dict()})
-        except Exception:
-            pass
-
+    previous = None
     try:
         while True:
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_json({"status": "pong"})
-    except WebSocketDisconnect:
+            state = state_for(job_id)
+            if state != previous:
+                await websocket.send_json(state)
+                previous = state
+            if state['status'] in ('completed', 'error'):
+                break
+            await asyncio.sleep(0.3)
+    except (WebSocketDisconnect, RuntimeError):
         pass
+    except HTTPException:
+        await websocket.send_json({'status': 'error', 'message': 'Unknown job.'})
     finally:
-        if job_id in ACTIVE_CONNECTIONS and websocket in ACTIVE_CONNECTIONS[job_id]:
-            ACTIVE_CONNECTIONS[job_id].remove(websocket)
+        await websocket.close()
 
 
-@router.get("/metrics")
-async def get_metrics():
-    """
-    Runs the evaluator against the golden dataset (or loads cached evaluation_results.json)
-    and returns quantitative metrics for the dashboard.
-    """
-    eval_file = "evaluation_results.json"
-    if os.path.exists(eval_file):
-        with open(eval_file, "r") as f:
-            return json.load(f)
+@router.get('/benchmark')
+async def benchmark():
+    dataset = json.loads((ROOT / 'evaluation/golden_standard.json').read_text(encoding='utf-8'))
+    target = '\n\n'.join(item['target_text'] for item in dataset)
+    sources = [source for item in dataset for source in item['sources']]
+    result = await orchestrator.run_pipeline(target_text=target, source_texts=sources, document_title='Synthetic demonstration benchmark')
+    state = {'status': 'completed', 'data': result.model_dump(mode='json')}
+    STATES[result.job_id] = state
+    persist(result.job_id, state)
+    return result
 
-    evaluator = CiteGuardEvaluator("evaluation/golden_standard.json", orchestrator=orchestrator)
-    results = await evaluator.evaluate()
-    with open(eval_file, "w") as f:
-        json.dump(results, f, indent=4)
-    return results
+
+@router.get('/metrics')
+async def metrics():
+    # Separate configuration from interactive jobs; never serve an unversioned stale cache.
+    evaluator = CiteGuardEvaluator(str(ROOT / 'evaluation/golden_standard.json'))
+    return await evaluator.evaluate()
