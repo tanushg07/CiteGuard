@@ -6,12 +6,13 @@ import json
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
-from fastapi import APIRouter, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
+
+from fastapi import APIRouter, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from app.services.orchestrator import Orchestrator, JOB_STORE
+
 from app.evaluation.evaluator import CiteGuardEvaluator
+from app.services.orchestrator import Orchestrator
 
 router = APIRouter()
 orchestrator = Orchestrator()
@@ -29,8 +30,8 @@ class SourceText(BaseModel):
 class TextAnalysisRequest(BaseModel):
     document_title: str = 'Pasted Academic Text'
     target_text: str = Field(max_length=2_000_000)
-    source_title: Optional[str] = 'Referenced Paper'
-    source_text: Optional[str] = Field(default=None, max_length=2_000_000)
+    source_title: str | None = 'Referenced Paper'
+    source_text: str | None = Field(default=None, max_length=2_000_000)
     sources: list[SourceText] = Field(default_factory=list)
 
 

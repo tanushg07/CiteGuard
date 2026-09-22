@@ -13,7 +13,8 @@ def write_pdf(path, text):
     lines = [line for paragraph in text.splitlines() for line in (textwrap.wrap(paragraph, 85) or [''])]
     if len(lines) > 48:
         raise ValueError('Demo fixture exceeds one page')
-    escape = lambda value: value.replace('\\', '\\\\').replace('(', r'\(').replace(')', r'\)')
+    def escape(value):
+        return value.replace('\\', '\\\\').replace('(', r'\(').replace(')', r'\)')
     stream = ('BT /F1 11 Tf 40 750 Td 14 TL\n' + '\n'.join(f'({escape(line)}) Tj T*' for line in lines) + '\nET').encode('ascii')
     objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>', b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>', b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream']
     data = b'%PDF-1.4\n'

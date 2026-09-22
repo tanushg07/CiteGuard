@@ -3,6 +3,8 @@ import os
 from functools import lru_cache
 from threading import Lock
 
+from backend.config import get_settings
+
 _model_lock = Lock()
 
 
@@ -22,7 +24,7 @@ def _cross_encoder():
     _configure_cpu()
     from sentence_transformers import CrossEncoder
     return CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', max_length=512,
-                        local_files_only=os.getenv('CITEGUARD_ALLOW_DOWNLOAD', '0') != '1')
+                        local_files_only=not get_settings().citeguard_allow_download)
 
 
 @lru_cache(maxsize=1)
@@ -34,9 +36,9 @@ def nli_pipeline():
 @lru_cache(maxsize=1)
 def _nli_pipeline():
     _configure_cpu()
-    from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
     name = 'typeform/distilbert-base-uncased-mnli'
-    local = os.getenv('CITEGUARD_ALLOW_DOWNLOAD', '0') != '1'
+    local = not get_settings().citeguard_allow_download
     tokenizer = AutoTokenizer.from_pretrained(name, local_files_only=local)
     model = AutoModelForSequenceClassification.from_pretrained(name, local_files_only=local)
     return pipeline('text-classification', model=model, tokenizer=tokenizer,

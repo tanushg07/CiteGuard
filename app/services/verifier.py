@@ -1,19 +1,21 @@
-import re
-import logging
 import functools
-from typing import List, Optional, Dict, Any
+import logging
+import re
+from typing import Any
 
 from app.core.models import nli_pipeline
+from app.core.schemas import (
+    ClaimCitationPair,
+    NumericalComparison,
+    RetrievedEvidence,
+    VerificationLabel,
+    VerificationResult,
+)
+
 
 def pipeline(*args, **kwargs):
     return nli_pipeline()
-from app.core.schemas import (
-    ClaimCitationPair,
-    RetrievedEvidence,
-    VerificationResult,
-    VerificationLabel,
-    NumericalComparison,
-)
+
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,8 @@ class Verifier:
         self.entailment_threshold = entailment_threshold
         self.contradiction_threshold = contradiction_threshold
         self.number_pattern = re.compile(r"\b\d+(?:\.\d+)?\b")
+        from backend.modules.nli_verifier import ReasoningGenerator
+        self.reasoner = ReasoningGenerator()
 
         self.stat_patterns = [
             re.compile(r"\b\d+(?:\.\d+)?\s*(?:%|percent|percentage points?)\b", re.IGNORECASE),
@@ -77,7 +81,7 @@ class Verifier:
                 self.nli_model = None
                 self.use_nli = False
 
-    def _extract_numerical_entities(self, text: str) -> List[str]:
+    def _extract_numerical_entities(self, text: str) -> list[str]:
         clean = re.sub(r"\[\s*\d+(?:\s*[,–-]\s*\d+)*\s*\]", "", text)
         clean = re.sub(r"\([^)]*(?:19|20)\d{2}[a-z]?\)", "", clean)
         pattern = r"(?<![\w.])[+-]?\d+(?:,\d{3})*(?:\.\d+)?(?:\s*[- ]?\s*(?:percentage points?|percent|%|mg|kg|km|cm|mm|meters?|hours?|weeks?|days?|years?|months?|seconds?|million|billion|g\b|m\b))?"
@@ -109,7 +113,7 @@ class Verifier:
                      'Missing or different values: ' + ', '.join(unmatched)) if claim_stats else None)
 
     @functools.lru_cache(maxsize=2000)
-    def _predict_nli_cached(self, evidence_text: str, claim_text: str) -> Optional[List[Dict[str, Any]]]:
+    def _predict_nli_cached(self, evidence_text: str, claim_text: str) -> list[dict[str, Any]] | None:
         """
         Cached NLI inference. Truncates both inputs before inference to
         prevent IndexError / CUDA OOM on long paragraphs.
@@ -135,7 +139,7 @@ class Verifier:
             logger.warning(f"NLI inference error: {e}")
             return None
 
-    def _verify_one(self, claim: ClaimCitationPair, evidence_list: List[RetrievedEvidence]) -> VerificationResult:
+    def _verify_one(self, claim: ClaimCitationPair, evidence_list: list[RetrievedEvidence]) -> VerificationResult:
         """Verifies the claim against candidate evidence passages."""
         if not evidence_list:
             return VerificationResult(
@@ -216,7 +220,7 @@ class Verifier:
 
     def verify(self, claim, evidence_list):
         if not evidence_list:
-            return self._verify_one(claim, [])
+            return self.reasoner.explain(self._verify_one(claim, []), self.use_nli)
         results = [self._verify_one(claim, [e]) for e in evidence_list]
         decisive = [r for r in results if r.status != VerificationLabel.INSUFFICIENT]
         if {r.status for r in decisive} >= {VerificationLabel.SUPPORTED, VerificationLabel.CONTRADICTED}:
@@ -226,4 +230,4 @@ class Verifier:
         else:
             result = max(decisive or results, key=lambda r: r.confidence)
         result.evidence_list = evidence_list
-        return result
+        return self.reasoner.explain(result, self.use_nli and self.nli_model is not None)

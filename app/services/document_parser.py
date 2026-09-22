@@ -1,14 +1,14 @@
 """PDF/text extraction with page provenance and bibliography separation."""
 import os
 import re
-from typing import Optional
+
 import pdfplumber
 
 REFERENCE = re.compile(r'^(?:\d+[. ]+)?(?:references|bibliography|works cited|literature cited)\s*$', re.I)
 SECTION = re.compile(r'^(?:section\s+\d+[:.]?.*|\d+(?:\.\d+)*\.?\s+[A-Z].*|abstract|introduction|methods|results|discussion|conclusion)$', re.I)
 
 class DocumentParser:
-    def __init__(self, file_path: Optional[str] = None):
+    def __init__(self, file_path: str | None = None):
         self.file_path = file_path
         self.extracted_references = []
 

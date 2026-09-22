@@ -2,9 +2,10 @@
 import json
 import time
 from pathlib import Path
+
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+
 from app.services.orchestrator import Orchestrator
-from app.core.schemas import VerificationLabel
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -56,7 +57,8 @@ class CiteGuardEvaluator:
                 if pred:
                     used.add(pred.id)
                     matched += 1
-                    normalize = lambda text: ' '.join(text.replace(gold['citation_raw'], '').split()).replace(' .', '.').strip()
+                    def normalize(text):
+                        return ' '.join(text.replace(gold['citation_raw'], '').split()).replace(' .', '.').strip()
                     exact += normalize(pred.text) == normalize(gold['claim_text'])
                     actual = {'Unrelated': 'INSUFFICIENT', 'Numerical Mismatch': 'CONTRADICTED'}.get(pred.status.value, pred.status.value.upper())
                 evidence = gold.get('gold_evidence', '')

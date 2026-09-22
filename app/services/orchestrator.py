@@ -1,28 +1,29 @@
-import os
+import asyncio
 import copy
+import logging
 import time
 import uuid
-import logging
-import asyncio
-from typing import List, Dict, Any, Optional, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 from app.core.schemas import (
-    ClaimCitationPair,
-    RetrievedEvidence,
-    VerificationResult,
-    VerificationLabel,
-    DocumentSummary,
     AnalysisResponse,
-    PipelineStepUpdate
+    DocumentSummary,
+    PipelineStepUpdate,
+    RetrievedEvidence,
+    VerificationLabel,
+    VerificationResult,
 )
 from app.services.document_parser import DocumentParser
 from app.services.extractor import Extractor
 from app.services.retriever import Retriever
 from app.services.verifier import Verifier
+from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 # Global storage for jobs
-JOB_STORE: Dict[str, AnalysisResponse] = {}
+JOB_STORE: dict[str, AnalysisResponse] = {}
 
 class Orchestrator:
     """
@@ -32,19 +33,19 @@ class Orchestrator:
     def __init__(self, use_models=None):
         self.parser = DocumentParser()
         self.extractor = Extractor()
-        self.use_models = use_models if use_models is not None else os.getenv("CITEGUARD_MODE", "neural") == "neural"
+        self.use_models = use_models if use_models is not None else get_settings().citeguard_mode == 'neural'
         self.retriever = Retriever(use_reranker=False)
         self.verifier = Verifier(use_nli=False)
     async def run_pipeline(
         self,
-        target_path: Optional[str] = None,
-        target_text: Optional[str] = None,
-        source_paths: Optional[List[str]] = None,
-        source_names: Optional[List[str]] = None,
-        source_texts: Optional[List[Dict[str, str]]] = None,
+        target_path: str | None = None,
+        target_text: str | None = None,
+        source_paths: list[str] | None = None,
+        source_names: list[str] | None = None,
+        source_texts: list[dict[str, str]] | None = None,
         document_title: str = "Uploaded Document",
-        progress_callback: Optional[Callable[[PipelineStepUpdate], Awaitable[None]]] = None,
-        job_id: Optional[str] = None
+        progress_callback: Callable[[PipelineStepUpdate], Awaitable[None]] | None = None,
+        job_id: str | None = None
     ) -> AnalysisResponse:
         """
         Runs the full 7-step pipeline asynchronously.
@@ -102,7 +103,7 @@ class Orchestrator:
             # Step 3: Source Identification
             await notify(3, "Source Identification", "loading", "Mapping citation markers to source documents and reference entries...", claims_found=len(claims), pct=45)
         
-            sources_to_index: List[Dict[str, Any]] = []
+            sources_to_index: list[dict[str, Any]] = []
 
             # Ingest uploaded source files
             if source_paths:
@@ -145,7 +146,7 @@ class Orchestrator:
             # Step 4: Evidence Retrieval
             await notify(4, "Evidence Retrieval", "loading", "Retrieving candidate evidence passages via BM25/TF-IDF...", claims_found=len(claims), pct=65)
         
-            retrieved_map: Dict[str, List[RetrievedEvidence]] = {}
+            retrieved_map: dict[str, list[RetrievedEvidence]] = {}
             indexes = {}
             for index, claim in enumerate(claims, 1):
                 await notify(4, "Evidence Retrieval", "loading", f"Retrieving evidence for citation {index}/{len(claims)}...", claims_found=len(claims), pct=65)
@@ -169,7 +170,7 @@ class Orchestrator:
             # Step 6: NLI Verification
             await notify(6, "NLI Verification", "loading", "Evaluating textual entailment, contradiction, and neutral alignment...", claims_found=len(claims), pct=90)
 
-            verified_results: List[VerificationResult] = []
+            verified_results: list[VerificationResult] = []
             for index, claim in enumerate(claims, 1):
                 await notify(6, "NLI Verification", "loading", f"Verifying citation {index}/{len(claims)}...", claims_found=len(claims), pct=90)
                 ev_list = retrieved_map.get(claim.id, [])

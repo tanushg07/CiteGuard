@@ -1,19 +1,20 @@
 import logging
-import re
 import math
+import re
 from collections import Counter
-import functools
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Any
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
 from app.core.models import cross_encoder
+from app.core.schemas import ClaimCitationPair, RetrievedEvidence
+
 
 def CrossEncoder(*args, **kwargs):
     return cross_encoder()
 
-from app.core.schemas import ClaimCitationPair, RetrievedEvidence
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +32,11 @@ class Retriever:
         self.use_reranker = use_reranker
 
         # These are set by add_sources() and reused across all retrieve() calls
-        self.chunks: List[str] = []
-        self.source_citations: Dict[int, str] = {}
-        self.source_pages: Dict[int, int] = {}
+        self.chunks: list[str] = []
+        self.source_citations: dict[int, str] = {}
+        self.source_pages: dict[int, int] = {}
         self._tfidf_matrix = None
-        self._vectorizer: Optional[TfidfVectorizer] = None
+        self._vectorizer: TfidfVectorizer | None = None
 
         if self.use_reranker:
             try:
@@ -58,15 +59,15 @@ class Retriever:
         self._tfidf_matrix = None
         self._vectorizer = None
 
-    def add_sources(self, sources: List[Dict[str, Any]]):
+    def add_sources(self, sources: list[dict[str, Any]]):
         """
         Chunks all source documents and builds a single shared TF-IDF index.
         This MUST be called once before any retrieve() calls.
         Building the index per-claim is O(N*M) and is forbidden.
         """
         self.clear()
-        all_chunks: List[str] = []
-        citation_map: Dict[int, str] = {}
+        all_chunks: list[str] = []
+        citation_map: dict[int, str] = {}
 
         for src in sources:
             name = src.get("name", "Unknown Source")
@@ -114,9 +115,9 @@ class Retriever:
     def retrieve(
         self,
         claim: ClaimCitationPair,
-        top_k: Optional[int] = None,
+        top_k: int | None = None,
         candidate_k: int = 10,
-    ) -> List[RetrievedEvidence]:
+    ) -> list[RetrievedEvidence]:
         """
         Retrieves top-k relevant evidence chunks for a claim.
         Uses TF-IDF for candidates (O(1) — index already built), then Cross-Encoder re-ranking.
