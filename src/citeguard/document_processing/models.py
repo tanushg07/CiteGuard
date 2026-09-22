@@ -37,11 +37,34 @@ class Reference:
     raw_text: str
 
 
+# Citation formats we can currently recognize. See citation_extractor.py.
+NUMBERED = "numbered"
+AUTHOR_YEAR = "author_year"
+
+
+@dataclass
+class Citation:
+    """One in-text citation mention, which may cover multiple sources at once
+    (a grouped citation like "[3, 7, 12]" or "(Smith, 2020; Jones, 2019)")."""
+
+    citation_id: str          # unique per mention, e.g. "cit_001"
+    raw_text: str              # exactly as it appears, e.g. "[3, 7, 12]"
+    citation_format: str       # NUMBERED or AUTHOR_YEAR
+    page: int
+    paragraph: int
+    ref_ids: list[str] = field(default_factory=list)
+    # For NUMBERED citations, ref_ids are reference-list numbers, e.g. ["3","7","12"].
+    # For AUTHOR_YEAR citations, ref_ids are the raw author/year strings, e.g.
+    # ["Smith et al., 2020", "Jones, 2019"], since there's no number to key on
+    # until we cross-reference the reference list (a Week 2 hardening task).
+
+
 @dataclass
 class ParsedDocument:
     pages: list[Page]
     sections: list[Section]
     references: list[Reference]
+    citations: list[Citation] = field(default_factory=list)
 
     def paragraph_text(self, page_number: int, paragraph_index: int) -> str | None:
         for page in self.pages:
