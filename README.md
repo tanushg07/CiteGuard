@@ -39,6 +39,32 @@ Missing/unmapped sources produce **insufficient evidence**, never self-verificat
 
 ## Pipeline and API
 
+### Optional Semantic Scholar metadata
+
+Set `SEMANTIC_SCHOLAR_API_KEY` in the backend process environment before starting
+CiteGuard (PowerShell: `$env:SEMANTIC_SCHOLAR_API_KEY = '<your key>'`). As with
+the other settings, `.env.example` is documentation; `.env` files are not
+automatically loaded. Never commit your key.
+
+Extracted citation markers are matched to bibliography entries. The extractor
+uses the [Semantic Scholar Academic Graph API](https://api.semanticscholar.org/api-docs/snippets)
+to look up a DOI directly, or search bibliographic text and require an
+unambiguous title/author/year match. Results include DOI, abstract, venue,
+authors, title and year when the service provides them. The original entry is
+always retained in `reference_metadata.raw_reference`, including in saved JSON
+reports, and displayed in the claim detail view.
+
+Missing keys make no network requests. Timeouts, invalid responses, unmatched
+papers and unavailable fields do not interrupt verification. HTTP 429 or an
+authentication failure stops further enrichment requests for that document;
+raw bibliography text remains available. Lookups are cached per extraction and
+limited to 20 requests with a 20-second request-admission budget and a maximum
+3-second timeout per network operation. Only bibliography text/DOIs are sent
+to Semantic Scholar; claims and uploaded PDF contents are not sent wholesale.
+Metadata and abstracts are descriptive and are **not added as evidence** or
+used to change verification labels. Missing bibliography mappings remain empty
+instead of guessing a source from a numeric marker.
+
 PDF/text parsing with page provenance → claim/citation pairs → supplied-source mapping → combined BM25 and TF-IDF candidates → cross-encoder reranking → NLI over multiple passages → numerical comparison → results.
 
 - `POST /api/verify`: multipart `target_file` and optional repeated `source_files`; returns job ID.
@@ -66,7 +92,7 @@ The evaluation writes `evaluation_results.json` with extraction recall/precision
 
 ## Boundaries
 
-- Sources are supplied locally; there is no automatic scholarly web search, DOI resolver, paywall access or OCR.
+- Source full texts are supplied locally; optional Semantic Scholar enrichment resolves bibliographic metadata, but does not download papers, bypass paywalls or perform OCR.
 - Basic layouts are supported. Complex two-column reading order, cross-page sentence continuations, unusual citation styles and tables can require correction or pasted text.
 - MNLI is a small general-domain model. It can abstain on complex claims or make errors. Scores are model confidence, not calibrated probabilities of truth.
 - Numerical checks compare exact values and common units (including simple mg/g/kg and cm/m/km conversion). They do not fully reason about ranges, statistical significance, entity-role swaps or tables.

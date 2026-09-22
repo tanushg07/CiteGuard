@@ -1,4 +1,6 @@
 .venv312/
+.env
+.env.local
 data/jobs/
 evaluation_results.json
 # Virtual environments
