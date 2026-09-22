@@ -34,7 +34,7 @@ class DocumentParser:
                         continue
                     if re.match(r'^\[\d+\]|^\d+\.', line) or not references:
                         references.append(line)
-                    elif references and not references[-1].endswith('.'):
+                    elif references and (re.match(r'^\[\d+\]|^\d+\.', references[-1]) or not references[-1].endswith('.')):
                         references[-1] += ' ' + line
                     else:
                         references.append(line)

@@ -67,7 +67,7 @@ class Extractor:
                 return m.group(0)
         return ""
 
-    def extract(self, paragraphs: List[Dict[str, Any]]) -> List[ClaimCitationPair]:
+    def extract(self, paragraphs: List[Dict[str, Any]], references=None, enricher=None) -> List[ClaimCitationPair]:
         """
         Scans paragraphs for claims that contain academic citations.
         Each cited SENTENCE is extracted exactly ONCE (deduplicated), paired with
@@ -110,4 +110,9 @@ class Extractor:
                     seen_sentences.add(key)
                     pairs.append(ClaimCitationPair(id=f'claim_{len(pairs)+1:04d}', text=sentence,
                         context=para_text, citation_marker=marker, page_number=page_number, section=section))
+        from app.services.reference_metadata import ReferenceEnricher, reference_for_marker
+        enricher = enricher or ReferenceEnricher()
+        for pair in pairs:
+            raw = reference_for_marker(pair.citation_marker, references or [])
+            pair.reference_metadata = enricher.enrich(raw)
         return pairs

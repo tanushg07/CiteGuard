@@ -8,7 +8,20 @@ class VerificationLabel(str, Enum):
     INSUFFICIENT = "Unrelated"
     NUMERICAL_MISMATCH = "Numerical Mismatch"
 
+class ReferenceMetadata(BaseModel):
+    raw_reference: str = ""
+    provider: str = "bibliography"
+    status: str = "not_found"
+    title: Optional[str] = None
+    doi: Optional[str] = None
+    abstract: Optional[str] = None
+    venue: Optional[str] = None
+    authors: List[str] = Field(default_factory=list)
+    year: Optional[int] = None
+
+
 class ClaimCitationPair(BaseModel):
+    reference_metadata: Optional[ReferenceMetadata] = None
     id: str = Field(..., description="Unique identifier for the claim")
     text: str = Field(..., description="The extracted sentence/claim text")
     context: str = Field(default="", description="The surrounding paragraph context")
@@ -32,6 +45,7 @@ class RetrievedEvidence(BaseModel):
     source_citation: Optional[str] = Field(default=None, description="Bibliographic reference citation")
 
 class VerificationResult(BaseModel):
+    reference_metadata: Optional[ReferenceMetadata] = None
     id: str = Field(..., description="Claim ID")
     text: str = Field(..., description="Claim text")
     context: str = Field(default="", description="Paragraph context in target document")

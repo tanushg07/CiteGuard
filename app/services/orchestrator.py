@@ -95,7 +95,7 @@ class Orchestrator:
             # Step 2: Claim Extraction
             await notify(2, "Claim Extraction", "loading", "Scanning for bracketed and author-year citation markers...", pct=25)
         
-            claims = await asyncio.to_thread(self.extractor.extract, paragraphs)
+            claims = await asyncio.to_thread(self.extractor.extract, paragraphs, references)
         
             await notify(2, "Claim Extraction", "complete", f"Identified {len(claims)} claim-citation pairs for verification.", claims_found=len(claims), pct=35)
 
@@ -174,6 +174,7 @@ class Orchestrator:
                 await notify(6, "NLI Verification", "loading", f"Verifying citation {index}/{len(claims)}...", claims_found=len(claims), pct=90)
                 ev_list = retrieved_map.get(claim.id, [])
                 v_res = await asyncio.to_thread(verifier.verify, claim, ev_list)
+                v_res.reference_metadata = claim.reference_metadata
                 verified_results.append(v_res)
 
             await notify(6, "NLI Verification", "complete", "NLI inference complete." if verifier.use_nli else "Conservative baseline complete; NLI unavailable.", claims_found=len(claims), pct=95)
