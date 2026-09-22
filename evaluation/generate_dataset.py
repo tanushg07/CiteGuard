@@ -1,107 +1,39 @@
+"""Create uploadable PDF demo fixtures from the checked-in synthetic dataset.
+
+This does not overwrite gold labels or claim that fixtures are published papers.
+"""
 import json
-import os
-from fpdf import FPDF
+import textwrap
+from pathlib import Path
 
-# Dataset configurations
-golden_data = [
-    {
-        "document_path": "evaluation/golden_dataset/sample_paper_1.pdf",
-        "source_paths": ["evaluation/golden_dataset/source_1.pdf"],
-        "claims": [
-            {
-                "claim_id": "gold_001",
-                "claim_text": "Training time was reduced by 40% when utilizing the novel sparse attention mechanism compared to the standard dense transformer baseline.",
-                "citation_raw": "[1]",
-                "gold_reference": "Vaswani et al., 2017",
-                "gold_evidence": "In our experiments with sparse attention on the WMT 2014 English-to-German translation task, the model achieved comparable BLEU scores while reducing overall training time by exactly 40% relative to the dense self-attention baseline.",
-                "gold_label": "SUPPORTED"
-            }
-        ]
-    },
-    {
-        "document_path": "evaluation/golden_dataset/sample_paper_2.pdf",
-        "source_paths": ["evaluation/golden_dataset/source_2.pdf"],
-        "claims": [
-            {
-                "claim_id": "gold_002",
-                "claim_text": "Global mean sea level is projected to rise by 2.5 meters by the year 2100 under the RCP8.5 emission scenario.",
-                "citation_raw": "[2]",
-                "gold_reference": "IPCC, 2021",
-                "gold_evidence": "Under the highest emission scenario (RCP8.5), global mean sea level rise is projected to be likely in the range of 0.63–1.01 meters by 2100. A rise approaching 2 meters cannot be ruled out due to deep uncertainty in ice-sheet processes, but 2.5 meters is not supported by current modeling consensus.",
-                "gold_label": "NUMERICAL MISMATCH"
-            }
-        ]
-    },
-    {
-        "document_path": "evaluation/golden_dataset/sample_paper_3.pdf",
-        "source_paths": ["evaluation/golden_dataset/source_3.pdf"],
-        "claims": [
-            {
-                "claim_id": "gold_003",
-                "claim_text": "The administration of 50mg of Compound X daily showed no statistically significant reduction in systemic inflammation markers after 6 weeks.",
-                "citation_raw": "[3]",
-                "gold_reference": "Smith & Jones, 2023",
-                "gold_evidence": "Over the 6-week trial period, patients receiving a 50mg daily dose of Compound X exhibited a marked, statistically significant decrease (p < 0.01) in key systemic inflammation markers, notably C-reactive protein (CRP) and Interleukin-6 (IL-6), compared to the placebo group.",
-                "gold_label": "CONTRADICTED"
-            }
-        ]
-    },
-    {
-        "document_path": "evaluation/golden_dataset/sample_paper_4.pdf",
-        "source_paths": ["evaluation/golden_dataset/source_4.pdf"],
-        "claims": [
-            {
-                "claim_id": "gold_004",
-                "claim_text": "Graph Neural Networks naturally struggle to capture long-range dependencies due to the over-squashing phenomenon.",
-                "citation_raw": "[4]",
-                "gold_reference": "Alon and Yahav, 2021",
-                "gold_evidence": "We demonstrate that the primary bottleneck in standard message-passing GNNs is the over-squashing effect. When the computation graph expands exponentially with depth, the model fails to propagate information across distant nodes without significant loss, directly limiting the capture of long-range dependencies.",
-                "gold_label": "SUPPORTED"
-            }
-        ]
-    },
-    {
-        "document_path": "evaluation/golden_dataset/sample_paper_5.pdf",
-        "source_paths": ["evaluation/golden_dataset/source_5.pdf"],
-        "claims": [
-            {
-                "claim_id": "gold_005",
-                "claim_text": "The economic impact of the 2008 financial crisis resulted in a 5% contraction of global GDP in the subsequent fiscal year.",
-                "citation_raw": "[5]",
-                "gold_reference": "World Bank Group, 2009",
-                "gold_evidence": "The report details the regulatory failures that precipitated the 2008 housing market collapse, emphasizing the lack of oversight in derivative markets and subprime mortgage lending practices.",
-                "gold_label": "INSUFFICIENT"
-            }
-        ]
-    }
-]
+ROOT = Path(__file__).resolve().parents[1]
 
-def create_pdf(text, filename):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    # latin-1 encode/decode to handle smart quotes if any, ignoring errors
-    clean_text = text.encode('latin-1', 'replace').decode('latin-1')
-    pdf.multi_cell(0, 10, txt=clean_text)
-    pdf.output(filename)
 
-if __name__ == "__main__":
-    os.makedirs("evaluation/golden_dataset", exist_ok=True)
-    
-    # Save JSON
-    with open("evaluation/golden_standard.json", "w", encoding="utf-8") as f:
-        json.dump(golden_data, f, indent=2)
+def write_pdf(path, text):
+    lines = [line for paragraph in text.splitlines() for line in (textwrap.wrap(paragraph, 85) or [''])]
+    if len(lines) > 48:
+        raise ValueError('Demo fixture exceeds one page')
+    escape = lambda value: value.replace('\\', '\\\\').replace('(', r'\(').replace(')', r'\)')
+    stream = ('BT /F1 11 Tf 40 750 Td 14 TL\n' + '\n'.join(f'({escape(line)}) Tj T*' for line in lines) + '\nET').encode('ascii')
+    objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>', b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>', b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream']
+    data = b'%PDF-1.4\n'
+    offsets = []
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(data))
+        data += f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
+    xref = len(data)
+    data += b'xref\n0 6\n0000000000 65535 f \n'
+    data += b''.join(f'{offset:010d} 00000 n \n'.encode() for offset in offsets)
+    data += f'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF'.encode()
+    path.write_bytes(data)
 
-    # Generate PDFs
-    for item in golden_data:
-        claim_info = item["claims"][0]
-        
-        # Target paper
-        target_text = f"Section 1: Introduction\n\n{claim_info['claim_text']} {claim_info['citation_raw']}\n\nReferences\n{claim_info['citation_raw']} {claim_info['gold_reference']}"
-        create_pdf(target_text, item["document_path"])
-        
-        # Source paper
-        source_text = f"{claim_info['gold_reference']}\n\n{claim_info['gold_evidence']}"
-        create_pdf(source_text, item["source_paths"][0])
 
-    print("Golden dataset created successfully!")
+if __name__ == '__main__':
+    dataset = json.loads((ROOT / 'evaluation/golden_standard.json').read_text(encoding='utf-8'))
+    output = ROOT / 'data/demo'
+    output.mkdir(parents=True, exist_ok=True)
+    write_pdf(output / 'manuscript.pdf', '\n\n'.join(item['target_text'] for item in dataset))
+    for item in dataset:
+        source = item['sources'][0]
+        write_pdf(output / f"{source['markers'][0]} {source['name']}.pdf", source['text'])
+    print(f'Demo manuscript and {len(dataset)} source PDFs written to {output}')

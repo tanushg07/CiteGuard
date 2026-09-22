@@ -69,4 +69,4 @@ def test_verifier_numerical_override(mock_pipeline):
     
     # NLI says entailment, but numbers (100 != 50) contradict!
     assert result.numerical_match is False
-    assert result.nli_label == VerificationLabel.CONTRADICTED
+    assert result.nli_label == VerificationLabel.NUMERICAL_MISMATCH

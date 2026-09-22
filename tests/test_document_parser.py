@@ -18,7 +18,7 @@ def test_document_parser_success(mock_pdf_open):
     mock_pdf.pages = [mock_page]
 
     parser = DocumentParser("dummy.pdf")
-    paragraphs = parser.parse()
+    paragraphs = parser.parse()["paragraphs"]
 
     assert len(paragraphs) == 2
     assert paragraphs[0]["page_number"] == 1
