@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Union
 
-from citeguard.document_processing.citation_extractor import extract_citations
+from citeguard.document_processing.citation_extractor import extract_citations, resolve_citation_sources
 from citeguard.document_processing.claim_citation_pairing import build_claim_citation_pairs
 from citeguard.document_processing.claim_extractor import extract_claims
 from citeguard.document_processing.models import ParsedDocument
@@ -25,6 +25,7 @@ def parse_document(pdf: Union[str, Path, bytes]) -> ParsedDocument:
     sections = detect_sections(pages)
     references = extract_references(pages, sections)
     citations = extract_citations(pages, sections)
+    resolve_citation_sources(citations, references)  # fills in citation.source_refs, in place
     claims = extract_claims(pages, citations)
     return ParsedDocument(
         pages=pages, sections=sections, references=references, citations=citations, claims=claims

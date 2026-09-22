@@ -8,11 +8,13 @@ carrying all three citation_ids (Days 6-7's pairing step, in
 claim_citation_pairing.py, is what fans that out into multiple
 ClaimCitationPair rows).
 
-Sentence splitting is a simple regex heuristic: split after ./!/? when
-followed by whitespace and then a capital letter, quote, or opening paren.
-This deliberately does NOT split on "et al." or similar abbreviations,
-since those are always followed by a lowercase word or a citation year, not
-a capital letter -- verified against every citation format we detect.
+Sentence splitting (hardened Days 8-10): split after ./!/? when followed by
+whitespace and then a capital letter, quote, or opening paren -- UNLESS the
+word immediately before the punctuation is a known abbreviation ("Dr.",
+"et al.", "Fig.", etc). The abbreviation guard matters more than it looks:
+narrative citations like "Smith et al. (2020) showed..." have an opening
+paren right after "al.", which would otherwise look exactly like a sentence
+boundary and incorrectly cut the claim in half.
 """
 
 from __future__ import annotations
@@ -20,9 +22,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from citeguard.document_processing.models import Citation, Page
+from citeguard.document_processing.models import Citation, NARRATIVE_AUTHOR_YEAR, Page
 
-_SENTENCE_BOUNDARY = re.compile(r'(?<=[.!?])\s+(?=[A-Z"\'(])')
+_SENTENCE_BOUNDARY = re.compile(r'([.!?])(\s+)(?=[A-Z"\'(])')
+_WORD_BEFORE = re.compile(r"([A-Za-z]+)$")
+
+# Preceding word (lowercased, punctuation stripped) that means "this period
+# is NOT a sentence end". "al" catches "et al." specifically, since that's
+# the abbreviation most likely to sit right before a citation.
+_ABBREVIATIONS = {
+    "dr", "mr", "mrs", "ms", "prof", "sr", "jr",
+    "fig", "eq", "eqs", "vs", "approx", "cf", "etc",
+    "no", "vol", "pp", "p", "al", "eg", "ie",
+}
 
 
 @dataclass
@@ -77,17 +89,52 @@ def extract_claims(pages: list[Page], citations: list[Citation]) -> list[Claim]:
 
 
 def _split_sentences(paragraph_text: str) -> list[str]:
-    parts = _SENTENCE_BOUNDARY.split(paragraph_text.strip())
-    return [p.strip() for p in parts if p.strip()]
+    text = paragraph_text.strip()
+    if not text:
+        return []
+
+    sentences: list[str] = []
+    start = 0
+    for match in _SENTENCE_BOUNDARY.finditer(text):
+        punct_index = match.start(1)
+        preceding_word = _preceding_word(text, punct_index)
+        if preceding_word in _ABBREVIATIONS:
+            continue  # e.g. "et al." / "Dr." -- not a real sentence boundary
+
+        sentence = text[start:match.end(1)].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = match.end()  # skip past the whitespace, start of next sentence
+
+    tail = text[start:].strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
+def _preceding_word(text: str, punct_index: int) -> str:
+    match = _WORD_BEFORE.search(text[:punct_index])
+    return match.group(1).lower() if match else ""
 
 
 def _strip_citation_markers(sentence: str, citations: list[Citation]) -> str:
-    """Remove the citation's raw text (e.g. "[3, 7]" or "(Smith, 2020)") from
-    the sentence, leaving a clean claim suitable for downstream NLI/evidence
-    comparison, and tidy up the whitespace/punctuation left behind."""
+    """Remove each citation's marker from the sentence, leaving a clean claim
+    suitable for downstream NLI/evidence comparison.
+
+    For NUMBERED and (parenthetical) AUTHOR_YEAR citations, the whole
+    raw_text is a parenthetical aside ("[1]", "(Smith, 2020)") and safe to
+    delete outright. For NARRATIVE_AUTHOR_YEAR citations ("Smith et al.
+    (2020) showed..."), the author phrase is the sentence's actual subject
+    -- deleting all of "Smith et al. (2020)" would gut the claim's grammar.
+    We only strip the trailing "(year)" part and leave the author name in
+    place.
+    """
     cleaned = sentence
     for citation in citations:
-        cleaned = cleaned.replace(citation.raw_text, "")
+        if citation.citation_format == NARRATIVE_AUTHOR_YEAR:
+            cleaned = re.sub(r"\s*\(\d{4}[a-z]?\)", "", cleaned, count=1)
+        else:
+            cleaned = cleaned.replace(citation.raw_text, "")
     cleaned = re.sub(r"\s{2,}", " ", cleaned)          # collapse double spaces
     cleaned = re.sub(r"\s+([.,;:])", r"\1", cleaned)   # "claim ." -> "claim."
     return cleaned.strip()

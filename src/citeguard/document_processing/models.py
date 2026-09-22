@@ -43,7 +43,8 @@ class Reference:
 
 # Citation formats we can currently recognize. See citation_extractor.py.
 NUMBERED = "numbered"
-AUTHOR_YEAR = "author_year"
+AUTHOR_YEAR = "author_year"                # "(Smith et al., 2020)"
+NARRATIVE_AUTHOR_YEAR = "narrative_author_year"  # "Smith et al. (2020)"
 
 
 @dataclass
@@ -53,14 +54,17 @@ class Citation:
 
     citation_id: str          # unique per mention, e.g. "cit_001"
     raw_text: str              # exactly as it appears, e.g. "[3, 7, 12]"
-    citation_format: str       # NUMBERED or AUTHOR_YEAR
+    citation_format: str       # NUMBERED, AUTHOR_YEAR, or NARRATIVE_AUTHOR_YEAR
     page: int
     paragraph: int
     ref_ids: list[str] = field(default_factory=list)
     # For NUMBERED citations, ref_ids are reference-list numbers, e.g. ["3","7","12"].
-    # For AUTHOR_YEAR citations, ref_ids are the raw author/year strings, e.g.
-    # ["Smith et al., 2020", "Jones, 2019"], since there's no number to key on
-    # until we cross-reference the reference list (a Week 2 hardening task).
+    # For AUTHOR_YEAR/NARRATIVE citations, ref_ids are raw author/year strings, e.g.
+    # ["Smith et al., 2020", "Jones, 2019"].
+    source_refs: list[str] = field(default_factory=list)
+    # Resolved reference-list entries this citation actually points to (see
+    # citation_extractor.resolve_citation_sources) -- one entry per ref_id
+    # that was successfully matched. Empty until resolution is run.
 
 
 @dataclass
