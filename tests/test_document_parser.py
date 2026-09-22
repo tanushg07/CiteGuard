@@ -1,6 +1,9 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from app.services.document_parser import DocumentParser
+
 
 @patch("app.services.document_parser.pdfplumber.open")
 def test_document_parser_success(mock_pdf_open):

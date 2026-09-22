@@ -1,7 +1,10 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from app.services.retriever import Retriever
+
 from app.core.schemas import ClaimCitationPair
+from app.services.retriever import Retriever
+
 
 def test_retriever_success():
     # Pass use_reranker=False to test pure TF-IDF without loading ML models

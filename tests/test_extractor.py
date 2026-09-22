@@ -1,5 +1,5 @@
-import pytest
 from app.services.extractor import Extractor
+
 
 def test_extractor_bracket_citation():
     extractor = Extractor()

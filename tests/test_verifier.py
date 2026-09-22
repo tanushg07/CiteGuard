@@ -1,7 +1,8 @@
-import pytest
-from unittest.mock import patch, MagicMock
-from app.services.verifier import Verifier
+from unittest.mock import MagicMock, patch
+
 from app.core.schemas import ClaimCitationPair, RetrievedEvidence, VerificationLabel
+from app.services.verifier import Verifier
+
 
 def test_verifier_no_evidence():
     verifier = Verifier(use_nli=False)

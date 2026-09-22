@@ -1,7 +1,9 @@
+
 import pytest
-import asyncio
-from app.services.orchestrator import Orchestrator
+
 from app.core.schemas import VerificationLabel
+from app.services.orchestrator import Orchestrator
+
 
 @pytest.mark.asyncio
 async def test_orchestrator_benchmark():

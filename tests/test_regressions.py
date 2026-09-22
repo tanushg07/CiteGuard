@@ -1,13 +1,16 @@
 import asyncio
 import time
+
 import pytest
 from fastapi.testclient import TestClient
-from app.main import app
+
 from app.api import routes
-from app.services.orchestrator import Orchestrator
-from app.services.extractor import Extractor
-from app.services.verifier import Verifier
 from app.core.schemas import ClaimCitationPair, RetrievedEvidence, VerificationLabel
+from app.main import app
+from app.services.extractor import Extractor
+from app.services.orchestrator import Orchestrator
+from app.services.verifier import Verifier
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -106,7 +109,8 @@ def test_pdf_upload_real_bytes(client):
     data = b'%PDF-1.4\n'
     offsets = [0]
     for i, obj in enumerate(objects,1):
-        offsets.append(len(data)); data += f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
+        offsets.append(len(data))
+        data += f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
     xref = len(data)
     data += b'xref\n0 6\n0000000000 65535 f \n'
     data += b''.join(f'{offset:010d} 00000 n \n'.encode() for offset in offsets[1:])
