@@ -60,7 +60,7 @@ class CiteGuardEvaluator:
                     def normalize(text):
                         return ' '.join(text.replace(gold['citation_raw'], '').split()).replace(' .', '.').strip()
                     exact += normalize(pred.text) == normalize(gold['claim_text'])
-                    actual = {'Unrelated': 'INSUFFICIENT', 'Numerical Mismatch': 'CONTRADICTED'}.get(pred.status.value, pred.status.value.upper())
+                    actual = pred.final_verdict if pred.final_verdict in ('SUPPORTED', 'CONTRADICTED') else 'INSUFFICIENT'
                 evidence = gold.get('gold_evidence', '')
                 if evidence:
                     retrieval_count += 1

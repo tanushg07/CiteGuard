@@ -144,7 +144,7 @@ def export(job_id: str, format: str = 'json'):
         raise HTTPException(400, 'Format must be json or csv.')
     output = io.StringIO()
     writer = csv.writer(output)
-    fields = ['id', 'citation_marker', 'text', 'status', 'confidence', 'source_document', 'evidence', 'numerical_check']
+    fields = ['id', 'citation_marker', 'text', 'final_verdict', 'decision_reason', 'confidence', 'source_document', 'evidence', 'numerical_check']
     writer.writerow(fields)
     for claim in data['claims']:
         writer.writerow([str(claim.get(f) or '') for f in fields])

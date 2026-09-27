@@ -19,6 +19,7 @@ class CrossrefEnricher:
         self.disabled_reason = None
         self.deadline = time.monotonic() + 20
         self.requests = 0
+        self.max_requests = 20
 
     def enrich(self, raw_reference):
         fallback = ReferenceMetadata(raw_reference=raw_reference)
@@ -33,7 +34,7 @@ class CrossrefEnricher:
             fallback.status = self.disabled_reason
             return fallback
         remaining = self.deadline - time.monotonic()
-        if self.requests >= 20 or remaining <= 0:
+        if self.requests >= self.max_requests or remaining <= 0:
             fallback.status = 'budget_exceeded'
             return fallback
         self.requests += 1
@@ -67,6 +68,8 @@ class CrossrefEnricher:
                     fallback.status = 'ambiguous_match' if matches else 'not_found'
         except (requests.RequestException, ValueError, TypeError, AttributeError, KeyError, IndexError):
             fallback.status = 'api_unavailable'
+        if 'papers' in locals():
+            fallback.identification['candidates'] = [BaseEnricher.match_details(p, raw_reference, doi) for p in papers]
         self.cache[raw_reference] = fallback
         return fallback.model_copy(deep=True)
 

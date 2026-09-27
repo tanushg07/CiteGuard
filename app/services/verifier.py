@@ -104,10 +104,14 @@ class Verifier:
     def _check_numerical_alignment(self, claim_text, evidence_text):
         claim_stats = self._extract_numerical_entities(claim_text)
         evidence_stats = self._extract_numerical_entities(evidence_text)
+        from app.services.numerical import check_change
+        structured = check_change(claim_text, evidence_text, claim_stats, evidence_stats)
+        if structured is not None:
+            return structured
         values = {self._quantity(e) for e in evidence_stats}
         unmatched = [c for c in claim_stats if self._quantity(c) not in values]
         match = not unmatched if claim_stats else None
-        return NumericalComparison(has_numerical_data=bool(claim_stats),
+        return NumericalComparison(status=('VALUES_PRESENT' if match else 'VALUES_MISSING') if claim_stats else 'NOT_APPLICABLE', has_numerical_data=bool(claim_stats),
             claim_entities=claim_stats, evidence_entities=evidence_stats, is_match=match,
             details=('Values present in evidence; context still requires NLI.' if match else
                      'Missing or different values: ' + ', '.join(unmatched)) if claim_stats else None)
@@ -163,6 +167,7 @@ class Verifier:
 
         label = VerificationLabel.INSUFFICIENT
         confidence = 0.0
+        nli_result = {'status': 'MODEL_UNAVAILABLE', 'label': None, 'score': None}
 
         # Clean claim text: strip citation markers and section numbers for NLI
         clean_claim = re.sub(r"\[\s*\d+(?:\s*[,-]\s*\d+)*\s*\]", "", claim.text)
@@ -172,7 +177,22 @@ class Verifier:
         if self.use_nli and self.nli_model:
             raw_preds = self._predict_nli_cached(top_evidence.evidence_text, clean_claim)
             if raw_preds is not None and len(raw_preds) > 0:
-                score_dict = {p["label"].upper(): p["score"] for p in raw_preds}
+                config = getattr(getattr(self.nli_model, 'model', None), 'config', None)
+                label_map = getattr(config, 'id2label', {})
+                normalized = []
+                for pred in raw_preds:
+                    actual = str(pred['label']).upper()
+                    if actual.startswith('LABEL_'):
+                        actual = str(label_map.get(int(actual.split('_')[-1]), actual)).upper()
+                    normalized.append({'label': actual, 'score': pred['score']})
+                raw_preds = normalized
+                score_dict = {p['label']: p['score'] for p in raw_preds}
+                known = set(score_dict) <= {'ENTAILMENT', 'CONTRADICTION', 'NEUTRAL'}
+                best = max(raw_preds, key=lambda p: p['score'])
+                nli_result = {'status': 'SUCCESS' if known else 'LABEL_MAPPING_UNAVAILABLE',
+                              'label': best['label'] if known else None, 'score': best['score'] if known else None,
+                              'scores': score_dict, 'model': 'typeform/distilbert-base-uncased-mnli',
+                              'truncated': len(clean_claim.split()) > 80 or len(top_evidence.evidence_text.split()) > NLI_MAX_WORDS}
 
                 entail_score = score_dict.get("ENTAILMENT", 0.0)
                 contra_score = score_dict.get("CONTRADICTION", 0.0)
@@ -189,6 +209,7 @@ class Verifier:
                 else:
                     label = VerificationLabel.INSUFFICIENT
             else:
+                nli_result = {'status': 'INFERENCE_FAILED', 'label': None, 'score': None}
                 label = VerificationLabel.INSUFFICIENT
         else:
             # Without NLI, only near-verbatim evidence can establish support.
@@ -216,11 +237,14 @@ class Verifier:
             numerical_check=num_comp.details,
             numerical_comparison=num_comp,
             page_number=claim.page_number,
+            nli=nli_result,
         )
 
-    def verify(self, claim, evidence_list):
+    def verify(self, claim, evidence_list, explain=True):
         if not evidence_list:
-            return self.reasoner.explain(self._verify_one(claim, []), self.use_nli)
+            result = self._verify_one(claim, [])
+            result.nli = {'status': 'NO_EVIDENCE', 'label': None, 'score': None}
+            return self.reasoner.explain(result, self.use_nli) if explain else result
         results = [self._verify_one(claim, [e]) for e in evidence_list]
         decisive = [r for r in results if r.status != VerificationLabel.INSUFFICIENT]
         if {r.status for r in decisive} >= {VerificationLabel.SUPPORTED, VerificationLabel.CONTRADICTED}:
@@ -230,4 +254,4 @@ class Verifier:
         else:
             result = max(decisive or results, key=lambda r: r.confidence)
         result.evidence_list = evidence_list
-        return self.reasoner.explain(result, self.use_nli and self.nli_model is not None)
+        return self.reasoner.explain(result, self.use_nli and self.nli_model is not None) if explain else result

@@ -35,6 +35,7 @@ class Retriever:
         self.chunks: list[str] = []
         self.source_citations: dict[int, str] = {}
         self.source_pages: dict[int, int] = {}
+        self.provenance = {}
         self._tfidf_matrix = None
         self._vectorizer: TfidfVectorizer | None = None
 
@@ -56,6 +57,7 @@ class Retriever:
         self.chunks = []
         self.source_citations = {}
         self.source_pages = {}
+        self.provenance = {}
         self._tfidf_matrix = None
         self._vectorizer = None
 
@@ -92,6 +94,7 @@ class Retriever:
                         all_chunks.append(sub)
                         citation_map[idx] = name
                         self.source_pages[idx] = src.get('page_number', 1)
+                        self.provenance[idx] = {k: src.get(k) for k in ('source_id', 'source_url', 'section', 'paragraph')}
 
         if not all_chunks:
             logger.error("No valid chunks extracted from any source document.")
@@ -164,10 +167,12 @@ class Retriever:
         # Cross-Encoder Re-ranking
         if self.use_reranker and self.reranker is not None:
             model_inputs = [[claim.text, self.chunks[idx]] for idx, _ in candidates]
+            rerank_ok = True
             try:
                 rerank_scores = self.reranker.predict(model_inputs)
             except Exception as e:
                 logger.warning(f"Cross-encoder failed for claim {claim.id}: {e}. Falling back to TF-IDF scores.")
+                rerank_ok = False
                 rerank_scores = [score for _, score in candidates]
 
             reranked = sorted(
@@ -175,7 +180,7 @@ class Retriever:
             )
 
             results = []
-            for (idx, _), score in reranked[:k]:
+            for (idx, retrieval_score), score in reranked[:k]:
                 doc_name = self.source_citations.get(idx, "Unknown Source")
                 results.append(
                     RetrievedEvidence(
@@ -183,6 +188,9 @@ class Retriever:
                         source_document=doc_name,
                         evidence_text=self.chunks[idx],
                         relevance_score=float(score),
+                        retrieval_score=retrieval_score, rerank_score=float(score) if rerank_ok else None,
+                        evidence_id=f"EVD-{idx:05d}",
+                        **{key: value for key, value in self.provenance.get(idx, {}).items() if value is not None},
                         source_citation=doc_name,
                         page_number=self.source_pages.get(idx, 1),
                     )
@@ -199,7 +207,9 @@ class Retriever:
                         claim_id=claim.id,
                         source_document=doc_name,
                         evidence_text=self.chunks[idx],
-                        relevance_score=score,
+                        relevance_score=score, retrieval_score=score,
+                        evidence_id=f"EVD-{idx:05d}",
+                        **{key: value for key, value in self.provenance.get(idx, {}).items() if value is not None},
                         source_citation=doc_name,
                         page_number=self.source_pages.get(idx, 1),
                     )

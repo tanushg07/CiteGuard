@@ -4,7 +4,7 @@ import pytest
 from app.services.document_parser import DocumentParser
 from app.services.extractor import Extractor
 from app.services.orchestrator import Orchestrator
-from app.services.reference_metadata import OpenAlexEnricher, ArxivEnricher, reference_for_marker
+from app.services.reference_metadata import OpenAlexEnricher, reference_for_marker
 
 RAW = '[1] Smith (2020). Reliable citation verification methods. Example Journal.'
 OPENALEX_PAPER = {

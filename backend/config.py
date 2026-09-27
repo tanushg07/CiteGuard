@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     crossref_timeout_seconds: float = Field(default=3, gt=0, le=10)
     openalex_enabled: bool = True
     arxiv_enabled: bool = True
+    openalex_api_key: SecretStr = SecretStr('')
+    source_timeout_seconds: float = Field(default=15, gt=0, le=60)
+    source_max_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
+    source_concurrency: int = Field(default=3, ge=1, le=5)
     citeguard_mode: Literal['neural', 'baseline'] = 'neural'
     citeguard_allow_download: bool = False
 

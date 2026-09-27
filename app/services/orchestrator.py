@@ -1,258 +1,202 @@
+"""Whole-paper analysis followed by independently traced citation verification."""
 import asyncio
 import copy
-import logging
+import hashlib
 import time
 import uuid
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections import Counter
+from pathlib import Path
 
-from app.core.schemas import (
-    AnalysisResponse,
-    DocumentSummary,
-    PipelineStepUpdate,
-    RetrievedEvidence,
-    VerificationLabel,
-    VerificationResult,
-)
+from app.core.schemas import AnalysisResponse, DocumentSummary, PipelineStepUpdate, VerificationLabel
 from app.services.document_parser import DocumentParser
 from app.services.extractor import Extractor
+from app.services.reference_metadata import reference_for_marker
 from app.services.retriever import Retriever
+from app.services.source_resolver import SourceResolver
+from app.services.sources import sources_for_claim
 from app.services.verifier import Verifier
 from backend.config import get_settings
 
-logger = logging.getLogger(__name__)
+JOB_STORE = {}
 
-# Global storage for jobs
-JOB_STORE: dict[str, AnalysisResponse] = {}
+
+def finalize(result, claim, source):
+    result.claim_group_id = claim.claim_group_id
+    result.citation_id = claim.citation_id
+    result.section = claim.section
+    result.sentence_index = claim.sentence_index
+    result.association_confidence = claim.association_confidence
+    result.reference_metadata = claim.reference_metadata
+    result.source_identification = {k:v for k,v in source.items() if k != 'passages'}
+    result.retrieval = {'status': 'SUCCESS' if result.evidence_list else 'NO_EVIDENCE',
+                        'top_k': len(result.evidence_list),
+                        'top_rerank_score': max((e.rerank_score for e in result.evidence_list if e.rerank_score is not None), default=None)}
+    verdict, reason = 'INSUFFICIENT_EVIDENCE', 'Retrieved evidence does not establish the complete claim.'
+    if claim.claim_type == 'not_verifiable':
+        verdict, reason = 'NOT_VERIFIABLE', 'This citation-bearing text is navigational, an acknowledgement, or a flattened table without a safely isolated assertion; inspect the original PDF.'
+    elif source['status'] != 'FULL_TEXT':
+        verdict, reason = source['status'], source['reason']
+    elif not result.evidence_list:
+        reason = 'Evidence retrieval failed for this citation or found no relevant passages.'
+    elif result.nli.get('status') != 'SUCCESS':
+        reason = 'NLI verification unavailable. Prepare the cached models with scripts/prepare_models.py; lexical overlap is not proof.'
+    elif result.nli.get('truncated'):
+        reason = 'The claim or evidence exceeded the NLI context window; full-claim support cannot be established.'
+    elif result.confidence == 0:
+        reason = 'Candidate passages give conflicting support and contradiction decisions.'
+    elif result.status == VerificationLabel.CONTRADICTED:
+        verdict, reason = 'CONTRADICTED', 'The NLI model finds contradiction in the selected source passage.'
+    elif result.numerical_comparison and result.numerical_comparison.status == 'FAILED':
+        verdict, reason = 'CONTRADICTED', 'An explicit numerical change disagrees with the claim; inspect the calculation.'
+    elif result.numerical_comparison and result.numerical_comparison.status in ('NUMERICAL_CHECK_UNSUPPORTED', 'VALUES_MISSING'):
+        reason = 'Numerical support is unresolved; missing values alone do not prove contradiction.'
+    elif result.status == VerificationLabel.SUPPORTED:
+        verdict, reason = 'SUPPORTED', 'NLI entails the claim and applicable numerical checks do not conflict.'
+    result.final_verdict, result.decision_reason = verdict, reason
+    return result
+
 
 class Orchestrator:
-    """
-    CiteGuard Pipeline Orchestrator.
-    Executes the 7-step citation verification pipeline end-to-end with real-time telemetry.
-    """
     def __init__(self, use_models=None):
         self.parser = DocumentParser()
         self.extractor = Extractor()
         self.use_models = use_models if use_models is not None else get_settings().citeguard_mode == 'neural'
         self.retriever = Retriever(use_reranker=False)
         self.verifier = Verifier(use_nli=False)
-    async def run_pipeline(
-        self,
-        target_path: str | None = None,
-        target_text: str | None = None,
-        source_paths: list[str] | None = None,
-        source_names: list[str] | None = None,
-        source_texts: list[dict[str, str]] | None = None,
-        document_title: str = "Uploaded Document",
-        progress_callback: Callable[[PipelineStepUpdate], Awaitable[None]] | None = None,
-        job_id: str | None = None
-    ) -> AnalysisResponse:
-        """
-        Runs the full 7-step pipeline asynchronously.
-        """
-        start_time = time.time()
-        retriever = await asyncio.to_thread(Retriever, self.use_models, self.retriever.chunk_size, self.retriever.top_k)
-        verifier = await asyncio.to_thread(Verifier, self.use_models, self.verifier.entailment_threshold, self.verifier.contradiction_threshold)
+
+    async def run_pipeline(self, target_path=None, target_text=None, source_paths=None, source_names=None,
+                           source_texts=None, document_title='Uploaded Document', progress_callback=None, job_id=None):
+        started = time.monotonic()
+        job_id = job_id or f'job_{uuid.uuid4().hex[:10]}'
         warnings = []
-        if not verifier.use_nli:
-            warnings.append("NLI unavailable: conservative lexical baseline used; results are not neural verification.")
-        if not retriever.use_reranker:
-            warnings.append("Cross-encoder unavailable: lexical ranking used.")
-        job_id = job_id or f"job_{uuid.uuid4().hex[:10]}"
-
-        async def notify(step_id: int, name: str, status: str, detail: str = "", claims_found: int = 0, pct: int = 0):
+        async def notify(step, name, status, detail, count=0, pct=0):
             if progress_callback:
-                update = PipelineStepUpdate(
-                    step_id=step_id,
-                    name=name,
-                    status=status,
-                    detail=detail,
-                    claims_found=claims_found,
-                    progress_percentage=pct
-                )
-                try:
-                    await progress_callback(update)
-                except Exception as e:
-                    logger.debug(f"Progress callback error: {e}")
-
-        try:
-            # Step 1: PDF Ingestion & Parsing
-            await notify(1, "PDF Ingestion & Parsing", "loading", "Extracting document structure and reference sections...", pct=10)
-            
-            if target_path:
-                parsed_doc = await asyncio.wait_for(asyncio.to_thread(self.parser.parse, target_path), timeout=60.0)
-                doc_name = document_title
-            elif target_text:
-                parsed_doc = await asyncio.wait_for(asyncio.to_thread(self.parser.parse_text, target_text, document_title), timeout=60.0)
-                doc_name = document_title
-            else:
-                raise ValueError("Either target_path or target_text must be provided.")
-
-            paragraphs = parsed_doc.get("paragraphs", [])
-            references = parsed_doc.get("references", [])
-        
-            await notify(1, "PDF Ingestion & Parsing", "complete", f"Extracted {len(paragraphs)} paragraphs across {parsed_doc.get('total_pages', 1)} pages.", pct=20)
-
-            # Step 2: Claim Extraction
-            await notify(2, "Claim Extraction", "loading", "Scanning for bracketed and author-year citation markers...", pct=25)
-        
-            claims = await asyncio.to_thread(self.extractor.extract, paragraphs, references)
-        
-            await notify(2, "Claim Extraction", "complete", f"Identified {len(claims)} claim-citation pairs for verification.", claims_found=len(claims), pct=35)
-
-            # Step 3: Source Identification
-            await notify(3, "Source Identification", "loading", "Mapping citation markers to source documents and reference entries...", claims_found=len(claims), pct=45)
-        
-            sources_to_index: list[dict[str, Any]] = []
-
-            # Ingest uploaded source files
-            if source_paths:
-                for source_index, s_path in enumerate(source_paths):
-                    try:
-                        s_parsed = await asyncio.wait_for(asyncio.to_thread(self.parser.parse, s_path), timeout=60.0)
-                        for paragraph in s_parsed.get('paragraphs', []):
-                            sources_to_index.append({
-                                'name': source_names[source_index] if source_names else s_parsed.get('document_name', 'Source PDF'),
-                                'text': paragraph['text'],
-                                'page_number': paragraph['page_number'],
-                            })
-                    except Exception as e:
-                        raise ValueError(f"Could not read uploaded source: {e}") from e
-
-            # Ingest text sources
-            if source_texts:
-                for st in source_texts:
-                    sources_to_index.append({
-                        "name": st.get("name", "Referenced Paper"),
-                        "text": st.get("text", ""),
-                        "citation": st.get("citation", st.get("name", "Referenced Paper")),
-                        "markers": st.get("markers", [])
-                    })
-
-            # Fetch missing PDFs automatically
-            from app.services.downloader import download_source_pdf
-            import os
-            for index, claim in enumerate(claims):
-                if claim.reference_metadata and claim.reference_metadata.pdf_url:
-                    marker = claim.citation_marker
-                    already_have = any(
-                        marker in s.get('markers', []) or marker == s.get('citation') or marker in s.get('name', '')
-                        for s in sources_to_index
-                    )
-                    if not already_have:
-                        await notify(3, "Source Identification", "loading", f"Downloading source for {marker}...", claims_found=len(claims), pct=45 + int((index/max(1, len(claims)))*10))
-                        pdf_path = await download_source_pdf(claim.reference_metadata.pdf_url, claim.reference_metadata.title or f"Source {marker}")
-                        if pdf_path:
-                            try:
-                                d_parsed = await asyncio.wait_for(asyncio.to_thread(self.parser.parse, pdf_path), timeout=60.0)
-                                for paragraph in d_parsed.get('paragraphs', []):
-                                    sources_to_index.append({
-                                        'name': claim.reference_metadata.title or f"Source {marker}",
-                                        'text': paragraph['text'],
-                                        'page_number': paragraph['page_number'],
-                                        'citation': marker,
-                                        'markers': [marker]
-                                    })
-                            except Exception as e:
-                                logger.warning(f"Could not parse downloaded PDF for {marker}: {e}")
-                            finally:
-                                try:
-                                    os.unlink(pdf_path)
-                                except OSError:
-                                    pass
-
-            if not sources_to_index:
-                warnings.append("No source documents supplied and auto-download failed. Upload cited sources to verify claims.")
-            # Each claim searches only explicitly mapped sources. A sole source is
-            # the user's selected source; multiple sources require a marker/title match.
-            from app.services.sources import sources_for_claim
-            claim_sources = {c.id: sources_for_claim(c, sources_to_index, references) for c in claims}
-            await asyncio.to_thread(retriever.add_sources, sources_to_index)
-            if any(not selected for selected in claim_sources.values()) and sources_to_index:
-                warnings.append("Some citations could not be mapped. Name source PDFs with their marker, e.g. [2] Study.pdf, or bibliography title.")
-            if not claims:
-                warnings.append("No supported citation formats were detected. No citations were invented.")
-
-            await notify(3, "Source Identification", "complete", f"Indexed {len(sources_to_index)} source corpora with {len(retriever.chunks)} evidence passages.", claims_found=len(claims), pct=55)
-
-            # Step 4: Evidence Retrieval
-            await notify(4, "Evidence Retrieval", "loading", "Retrieving candidate evidence passages via BM25/TF-IDF...", claims_found=len(claims), pct=65)
-        
-            retrieved_map: dict[str, list[RetrievedEvidence]] = {}
-            indexes = {}
-            for index, claim in enumerate(claims, 1):
-                await notify(4, "Evidence Retrieval", "loading", f"Retrieving evidence for citation {index}/{len(claims)}...", claims_found=len(claims), pct=65)
-                selected = claim_sources[claim.id]
-                key = tuple((source["name"], source["text"], source.get("page_number", 1)) for source in selected)
+                await progress_callback(PipelineStepUpdate(step_id=step, name=name, status=status,
+                    detail=detail, claims_found=count, progress_percentage=pct))
+        await notify(1, 'Analyzing whole paper', 'loading', 'Reading all pages and constructing the document structure.', pct=5)
+        parser = DocumentParser()
+        if target_path:
+            document = await asyncio.wait_for(asyncio.to_thread(parser.parse, target_path), 120)
+            target_digest = await asyncio.to_thread(lambda: hashlib.sha256(Path(target_path).read_bytes()).hexdigest())
+        elif target_text:
+            document = await asyncio.to_thread(parser.parse_text, target_text, document_title)
+            target_digest = None
+        else:
+            raise ValueError('Either a PDF or target text is required.')
+        await notify(1, 'Analyzing whole paper', 'complete', f"Read {document['total_pages']} pages and {len(document['sentences'])} sentences.", pct=15)
+        await notify(2, 'Extracting citations', 'loading', 'Associating citation markers with local sentences.', pct=20)
+        claims = self.extractor.extract(document['paragraphs'], document['references'], enrich=False)
+        await notify(2, 'Extracting citations', 'complete', f'{len(claims)} claim-citation pairs detected.', len(claims),25)
+        if not claims:
+            warnings.append('No supported citation patterns were detected.')
+        supplied = list(source_texts or [])
+        for index, path in enumerate(source_paths or []):
+            parsed = await asyncio.to_thread(DocumentParser().parse, path)
+            supplied.extend({**p, 'name': source_names[index] if source_names else parsed['document_name']}
+                            for p in parsed['paragraphs'])
+        resolver = SourceResolver()
+        source_records, claim_sources, source_states = {}, {}, {}
+        await notify(3, 'Identifying source papers', 'loading', 'Matching references and retrieving accessible full text.', len(claims),30)
+        raw_by_claim = {c.id: reference_for_marker(c.citation_marker, document['references']) for c in claims}
+        # Schedule independent reference resolution with bounded concurrency and one task per reference.
+        pending = {}
+        for c in claims:
+            local = sources_for_claim(c, supplied, document['references'])
+            if local:
+                claim_sources[c.id] = local
+                source_states[c.id] = {'status': 'FULL_TEXT', 'source_id': 'USER-SUPPLIED', 'reason': 'Explicitly supplied source.', 'passages': local}
+            elif raw_by_claim[c.id] not in pending:
+                raw = raw_by_claim[c.id]
+                pending[raw] = asyncio.create_task(resolver.resolve(raw))
+        completed = 0
+        # as_completed keeps progress moving even when an early reference is slow.
+        async def identified(raw, task):
+            try:
+                return raw, await task
+            except Exception:
+                from app.core.schemas import ReferenceMetadata
+                return raw, ({'status': 'SOURCE_UNAVAILABLE', 'reason': 'Source resolution failed for this reference.',
+                              'source_id': 'SRC-' + hashlib.sha256(raw.encode()).hexdigest()[:12], 'passages': []}, ReferenceMetadata(raw_reference=raw))
+        for task in asyncio.as_completed([identified(raw, task) for raw,task in pending.items()]):
+            raw, (record, metadata) = await task
+            if target_digest and record.get('sha256') == target_digest:
+                record.update(status='SOURCE_UNAVAILABLE', reason='The resolved PDF is the submitted manuscript; self-verification is blocked.', passages=[])
+            source_records[raw] = record
+            for c in claims:
+                if c.id not in claim_sources and raw_by_claim[c.id] == raw:
+                    c.reference_metadata = metadata
+                    claim_sources[c.id] = record.get('passages', [])
+                    source_states[c.id] = record
+            completed += 1
+            await notify(3, 'Identifying source papers', 'loading', f'Resolved {completed}/{len(pending)} references: {record["status"]}.', len(claims),30+int(25*completed/max(1,len(pending))))
+        await notify(3, 'Identifying source papers', 'complete', f'{sum(r["status"] == "FULL_TEXT" for r in source_records.values())} automatically retrieved source papers.',len(claims),55)
+        await notify(4, 'Retrieving evidence', 'loading', 'Preparing local evidence indexes and available models.',len(claims),60)
+        retriever = await asyncio.to_thread(Retriever, self.use_models, min(self.retriever.chunk_size, 250), self.retriever.top_k)
+        verifier = await asyncio.to_thread(Verifier, self.use_models, self.verifier.entailment_threshold, self.verifier.contradiction_threshold)
+        if not verifier.use_nli:
+            warnings.append('MODEL_UNAVAILABLE: NLI verification unavailable; lexical matches cannot establish support. Run scripts/prepare_models.py.')
+        if not retriever.use_reranker:
+            warnings.append('MODEL_UNAVAILABLE: cross-encoder unavailable; using lexical retrieval.')
+        indexes, retrieved = {}, {}
+        for i,c in enumerate(claims,1):
+            selected = claim_sources.get(c.id, [])
+            key = tuple((s.get('source_id'),s['name'],s['text'],s.get('page_number',1)) for s in selected)
+            try:
                 if key not in indexes:
-                    local = copy.copy(retriever)
-                    await asyncio.to_thread(local.add_sources, selected)
-                    indexes[key] = local
-                local = indexes[key]
-                candidates = await asyncio.to_thread(local.retrieve, claim, local.top_k, max(10, local.top_k)) if local.chunks else []
-                retrieved_map[claim.id] = candidates
-
-            await notify(4, "Evidence Retrieval", "complete", f"Retrieved candidate passages for all {len(claims)} claims.", claims_found=len(claims), pct=75)
-
-            # Step 5: Cross-Encoder Re-ranking
-            await notify(5, "Cross-Encoder Re-ranking", "loading", "Computing fine-grained semantic alignment scores...", claims_found=len(claims), pct=80)
-            # Reranking is integrated into retriever.retrieve(); simulate fast validation checkpoint
-            await notify(5, "Cross-Encoder Re-ranking", "complete", "Cross-encoder ranking complete." if retriever.use_reranker else "Lexical ranking only (cross-encoder unavailable).", claims_found=len(claims), pct=85)
-
-            # Step 6: NLI Verification
-            await notify(6, "NLI Verification", "loading", "Evaluating textual entailment, contradiction, and neutral alignment...", claims_found=len(claims), pct=90)
-
-            verified_results: list[VerificationResult] = []
-            for index, claim in enumerate(claims, 1):
-                await notify(6, "NLI Verification", "loading", f"Verifying citation {index}/{len(claims)}...", claims_found=len(claims), pct=90)
-                ev_list = retrieved_map.get(claim.id, [])
-                v_res = await asyncio.to_thread(verifier.verify, claim, ev_list)
-                v_res.reference_metadata = claim.reference_metadata
-                verified_results.append(v_res)
-
-            await notify(6, "NLI Verification", "complete", "NLI inference complete." if verifier.use_nli else "Conservative baseline complete; NLI unavailable.", claims_found=len(claims), pct=95)
-
-            # Step 7: Numerical Verification & Summary
-            await notify(7, "Numerical Verification", "loading", "Cross-referencing statistical values, metrics, and percentages...", claims_found=len(claims), pct=98)
-
-            # Calculate summary statistics
-            total = len(verified_results)
-            supported = sum(1 for r in verified_results if r.status == VerificationLabel.SUPPORTED)
-            contradicted = sum(1 for r in verified_results if r.status == VerificationLabel.CONTRADICTED)
-            unrelated = sum(1 for r in verified_results if r.status == VerificationLabel.INSUFFICIENT)
-            num_mismatch = sum(1 for r in verified_results if r.status == VerificationLabel.NUMERICAL_MISMATCH)
-
-            supported_pct = round((supported / total * 100), 1) if total > 0 else 0.0
-            avg_conf = round(sum(r.confidence for r in verified_results) / total, 1) if total > 0 else 0.0
-            elapsed = round(time.time() - start_time, 2)
-
-            summary = DocumentSummary(
-                document_name=doc_name,
-                total_claims=total,
-                supported_count=supported,
-                contradicted_count=contradicted,
-                unrelated_count=unrelated,
-                numerical_mismatch_count=num_mismatch,
-                supported_percentage=supported_pct,
-                average_confidence=avg_conf,
-                processing_time_seconds=elapsed
-            )
-
-            response = AnalysisResponse(
-                job_id=job_id,
-                summary=summary,
-                claims=verified_results,
-                status="completed",
-                warnings=warnings,
-                engines={"retrieval": "bm25+tfidf", "reranker": "cross-encoder" if retriever.use_reranker else "lexical", "verification": "nli" if verifier.use_nli else "baseline"}
-            )
-
-            JOB_STORE[job_id] = response
-
-            await notify(7, "Numerical Verification", "complete", f"Analysis finished in {elapsed}s. {supported}/{total} claims supported.", claims_found=total, pct=100)
-
-            return response
-        except Exception as e:
-            error_msg = f"Pipeline Error: {str(e)}"
-            await notify(99, "Error", "error", error_msg, pct=0)
-            raise e
+                    index = copy.copy(retriever)
+                    await asyncio.to_thread(index.add_sources, selected)
+                    indexes[key] = index
+                index = indexes[key]
+                retrieved[c.id] = await asyncio.to_thread(index.retrieve,c,index.top_k,10) if index.chunks else []
+            except Exception:
+                retrieved[c.id] = []
+                warnings.append(f'Evidence retrieval failed for {c.id}.')
+            await notify(4,'Retrieving evidence','loading',f'Retrieved candidates for {i}/{len(claims)} citations.',len(claims),60+int(15*i/max(1,len(claims))))
+        await notify(4,'Retrieving evidence','complete','Evidence retrieval finished.',len(claims),75)
+        await notify(5,'Reranking evidence','complete','Cross-encoder scores retained separately from lexical scores.' if retriever.use_reranker else 'Lexical ranking only; model unavailable.',len(claims),80)
+        results = []
+        for i,c in enumerate(claims,1):
+            await notify(6,'Verifying claims','loading',f'Verifying {i}/{len(claims)} against source passages.',len(claims),80+int(15*i/max(1,len(claims))))
+            try:
+                result = await asyncio.to_thread(verifier.verify,c,retrieved.get(c.id,[]),False)
+                finalize(result,c,source_states[c.id])
+                # Partial support requires separately supported clauses, never a midrange confidence score.
+                if result.final_verdict == 'INSUFFICIENT_EVIDENCE' and result.nli.get('status') == 'SUCCESS' and result.evidence_list:
+                    import re
+                    clauses = re.split(r';|\band\b', c.text)
+                    if 1 < len(clauses) <= 3 and all(len(part.split()) >= 5 for part in clauses):
+                        component_results = []
+                        for part in clauses:
+                            subclaim = c.model_copy(update={'text': part.strip()})
+                            sub = await asyncio.to_thread(verifier.verify,subclaim,result.evidence_list,False)
+                            finalize(sub,subclaim,source_states[c.id])
+                            component_results.append({'text':part.strip(),'verdict':sub.final_verdict,'nli':sub.nli})
+                        result.nli['components'] = component_results
+                        verdicts = [r['verdict'] for r in component_results]
+                        if 'SUPPORTED' in verdicts and 'INSUFFICIENT_EVIDENCE' in verdicts and 'CONTRADICTED' not in verdicts:
+                            result.final_verdict = 'PARTIALLY_SUPPORTED'
+                            result.decision_reason = 'At least one independently checked clause is supported; another remains unresolved.'
+                result = await asyncio.to_thread(verifier.reasoner.explain,result,verifier.use_nli)
+            except Exception:
+                result = verifier._verify_one(c,[])
+                finalize(result,c,source_states[c.id])
+                result.final_verdict = 'INSUFFICIENT_EVIDENCE'
+                result.decision_reason = 'Verification failed for this citation; no successful verdict was inferred.'
+            results.append(result)
+        await notify(6,'Verifying claims','complete','NLI and numerical decisions recorded.',len(claims),95)
+        counts = Counter(r.final_verdict for r in results)
+        summary = DocumentSummary(document_name=document_title,total_claims=len(results),
+            total_pages=document['total_pages'],total_references=len(document['references']),
+            unique_claims=len({c.claim_group_id for c in claims}),verdict_counts=dict(counts),
+            supported_count=counts['SUPPORTED'],contradicted_count=counts['CONTRADICTED'],
+            unrelated_count=counts['INSUFFICIENT_EVIDENCE'],numerical_mismatch_count=sum(r.numerical_comparison is not None and r.numerical_comparison.status=='FAILED' for r in results),
+            supported_percentage=round(100*counts['SUPPORTED']/len(results),1) if results else 0,
+            average_confidence=round(sum(r.confidence for r in results)/len(results),1) if results else 0,
+            processing_time_seconds=round(time.monotonic()-started,2))
+        response = AnalysisResponse(job_id=job_id,summary=summary,claims=results,document=document,
+            sources=[{k:v for k,v in r.items() if k!='passages'} for r in source_records.values()],warnings=warnings,
+            engines={'retrieval':'bm25+tfidf','reranker':'cross-encoder' if retriever.use_reranker else 'lexical',
+                     'verification':'nli' if verifier.use_nli else 'MODEL_UNAVAILABLE'})
+        JOB_STORE[job_id] = response
+        await notify(7,'Report complete','complete',f'Analyzed {len(results)} citations across {document["total_pages"]} pages.',len(claims),100)
+        return response

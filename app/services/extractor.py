@@ -67,7 +67,7 @@ class Extractor:
                 return m.group(0)
         return ""
 
-    def extract(self, paragraphs: list[dict[str, Any]], references=None, enricher=None) -> list[ClaimCitationPair]:
+    def extract(self, paragraphs: list[dict[str, Any]], references=None, enricher=None, enrich=True) -> list[ClaimCitationPair]:
         """
         Scans paragraphs for claims that contain academic citations.
         Each cited SENTENCE is extracted exactly ONCE (deduplicated), paired with
@@ -76,6 +76,7 @@ class Extractor:
         pairs: list[ClaimCitationPair] = []
         seen_sentences: set[str] = set()
 
+        sentence_index = 0
         for para in paragraphs:
             if para.get("section", "").lower().strip() in {"references", "bibliography", "works cited"}:
                 continue
@@ -87,6 +88,7 @@ class Extractor:
             sentences = self._split_sentences(para_text)
 
             for sentence in sentences:
+                sentence_index += 1
                 if not self._has_citation(sentence):
                     continue
 
@@ -109,10 +111,29 @@ class Extractor:
                         continue
                     seen_sentences.add(key)
                     pairs.append(ClaimCitationPair(id=f'claim_{len(pairs)+1:04d}', text=sentence,
-                        context=para_text, citation_marker=marker, page_number=page_number, section=section))
-        from app.services.reference_metadata import reference_for_marker, CompositeEnricher
+                        context=para_text, citation_marker=marker, page_number=page_number, section=section,
+                        claim_group_id=f'CLM-{sentence_index:04d}', citation_id='CIT-' + re.sub(r'[^A-Za-z0-9]', '', marker),
+                        sentence_index=sentence_index, paragraph=para.get('paragraph', 0),
+                        association_confidence='uncertain' if len(markers) > 1 or len(sentence.split()) > 80 else 'sentence_local',
+                        claim_type=self._claim_type(sentence)))
+        from app.services.reference_metadata import CompositeEnricher, reference_for_marker
+        if not enrich:
+            return pairs
         enricher = enricher or CompositeEnricher()
         for pair in pairs:
             raw = reference_for_marker(pair.citation_marker, references or [])
             pair.reference_metadata = enricher.enrich(raw)
         return pairs
+
+    @staticmethod
+    def _claim_type(sentence: str) -> str:
+        navigation = r'^(?:see|refer to|for (?:details|an overview)|we (?:thank|refer)|in (?:the )?(?:following|next) sections?\b|(?:in this (?:paper|section),? )?we will (?:describe|discuss|present|review))\b'
+        if re.match(navigation, sentence, re.I):
+            return 'not_verifiable'
+        # Flattened tables are retained for inspection, but are unsafe NLI hypotheses.
+        without_citations = re.sub(r'\[[\d,\s–-]+\]', '', sentence)
+        words = without_citations.split()
+        numeric_tokens = sum(bool(re.fullmatch(r'[\d.,%+−-]+', word)) for word in words)
+        if numeric_tokens >= 10 and numeric_tokens / max(len(words), 1) > 0.15:
+            return 'not_verifiable'
+        return 'assertion_candidate'

@@ -16,7 +16,7 @@ class ReasoningGenerator:
 
     def explain(self, result, neural):
         engine = 'NLI' if neural else 'the conservative lexical baseline'
-        verdict = result.status.value
+        verdict = result.final_verdict if result.decision_reason else result.status.value
         if not result.evidence_list:
             fallback = 'No matching source passage was retrieved. The claim requires source evidence before it can be verified.'
         else:
@@ -27,6 +27,8 @@ class ReasoningGenerator:
                          ' Matching values still require contextual interpretation.'
                          if comparison and comparison.has_numerical_data else
                          ' This score describes evidence alignment and is not a probability that the claim is true.')
+        if result.decision_reason:
+            fallback = result.decision_reason + ' The source passages and individual checks are listed below.'
         result.reasoning = fallback
         result.reasoning_provider = 'template'
         key = self.settings.groq_api_key.get_secret_value().strip()
