@@ -19,9 +19,19 @@ class ReferenceMetadata(BaseModel):
     venue: str | None = None
     authors: list[str] = Field(default_factory=list)
     year: int | None = None
+    pdf_url: str | None = None
+    urls: list[str] = Field(default_factory=list)
+    arxiv_id: str | None = None
+    identification: dict = Field(default_factory=dict)
 
 
 class ClaimCitationPair(BaseModel):
+    claim_group_id: str = ''
+    citation_id: str = ''
+    sentence_index: int = 0
+    paragraph: int = 0
+    association_confidence: str = 'sentence_local'
+    claim_type: str = 'assertion_candidate'
     reference_metadata: ReferenceMetadata | None = None
     id: str = Field(..., description="Unique identifier for the claim")
     text: str = Field(..., description="The extracted sentence/claim text")
@@ -31,6 +41,8 @@ class ClaimCitationPair(BaseModel):
     section: str | None = Field(default=None, description="Section heading if detected")
 
 class NumericalComparison(BaseModel):
+    status: str = 'NOT_APPLICABLE'
+    calculation: str | None = None
     has_numerical_data: bool = Field(default=False)
     claim_entities: list[str] = Field(default_factory=list)
     evidence_entities: list[str] = Field(default_factory=list)
@@ -38,6 +50,13 @@ class NumericalComparison(BaseModel):
     details: str | None = Field(default=None)
 
 class RetrievedEvidence(BaseModel):
+    evidence_id: str = ''
+    source_id: str = ''
+    source_url: str | None = None
+    section: str | None = None
+    paragraph: int | None = None
+    retrieval_score: float = 0
+    rerank_score: float | None = None
     page_number: int = 1
     claim_id: str = Field(..., description="The ID of the claim this evidence is for")
     source_document: str = Field(..., description="The name or identifier of the source document")
@@ -46,6 +65,16 @@ class RetrievedEvidence(BaseModel):
     source_citation: str | None = Field(default=None, description="Bibliographic reference citation")
 
 class VerificationResult(BaseModel):
+    final_verdict: str = 'INSUFFICIENT_EVIDENCE'
+    claim_group_id: str = ''
+    citation_id: str = ''
+    sentence_index: int = 0
+    section: str | None = None
+    association_confidence: str = 'sentence_local'
+    source_identification: dict = Field(default_factory=dict)
+    retrieval: dict = Field(default_factory=dict)
+    nli: dict = Field(default_factory=dict)
+    decision_reason: str = ''
     reasoning: str = ''
     reasoning_provider: str = 'template'
     reference_metadata: ReferenceMetadata | None = None
@@ -86,6 +115,10 @@ class VerificationResult(BaseModel):
         return None
 
 class DocumentSummary(BaseModel):
+    total_pages: int = 0
+    total_references: int = 0
+    unique_claims: int = 0
+    verdict_counts: dict[str, int] = Field(default_factory=dict)
     document_name: str
     total_claims: int
     supported_count: int
@@ -97,6 +130,8 @@ class DocumentSummary(BaseModel):
     processing_time_seconds: float
 
 class AnalysisResponse(BaseModel):
+    document: dict = Field(default_factory=dict)
+    sources: list[dict] = Field(default_factory=list)
     job_id: str
     summary: DocumentSummary
     claims: list[VerificationResult]

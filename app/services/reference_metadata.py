@@ -48,9 +48,7 @@ class BaseEnricher:
         # Relevance order alone is not a reliable bibliographic identity match.
         if len(title_words) < 3 or not title_words.issubset(tokens(reference)):
             return False
-        years = re.findall(r'\b(?:19|20)\d{2}\b', reference)
-        if years and str(paper.get('year')) not in years:
-            return False
+        # Do not fail strictly on year, as preprints vs published dates often differ.
         authors = paper.get('authors') or []
         surnames = [author.get('name', '').split()[-1] for author in authors if author.get('name', '').strip()]
         return any(tokens(surname) and tokens(surname).issubset(tokens(reference)) for surname in surnames)
@@ -91,7 +89,7 @@ class OpenAlexEnricher(BaseEnricher):
         headers = {'User-Agent': f'CiteGuard/1.0 (mailto:{self.settings.api_contact_email})'}
         
         try:
-            with httpx.Client(timeout=min(3.0, remaining), transport=self.transport) as client:
+            with httpx.Client(timeout=min(10.0, remaining), follow_redirects=True, transport=self.transport) as client:
                 response = client.get(url, params=params, headers=headers)
             
             if response.status_code in (429, 401, 403):
@@ -110,7 +108,8 @@ class OpenAlexEnricher(BaseEnricher):
                         raw_reference=raw_reference, provider='openalex', status='enriched',
                         title=paper['title'], doi=paper['externalIds'].get('DOI'),
                         abstract=paper['abstract'], venue=paper['venue'], year=paper['year'],
-                        authors=[author['name'] for author in paper['authors']]
+                        authors=[author['name'] for author in paper['authors']],
+                        pdf_url=paper.get('pdf_url')
                     )
                 else:
                     fallback.status = 'ambiguous_match' if matches else 'not_found'
@@ -146,7 +145,8 @@ class OpenAlexEnricher(BaseEnricher):
             'abstract': html.unescape(abstract.strip()) if abstract else None,
             'venue': source.get('display_name'),
             'year': work.get('publication_year'),
-            'authors': [{'name': a.get('author', {}).get('display_name', '')} for a in authorships]
+            'authors': [{'name': a.get('author', {}).get('display_name', '')} for a in authorships],
+            'pdf_url': work.get('open_access', {}).get('oa_url')
         }
 
 
@@ -174,13 +174,13 @@ class ArxivEnricher(BaseEnricher):
         doi = doi_match[0].rstrip('.,;') if doi_match else None
         
         query = re.sub(r'^\s*(?:\[\d+\]|\d+[.)])\s*', '', raw_reference)[:1000]
-        params = {'search_query': f'all:"{query}"', 'max_results': 3}
-
-        headers = {'User-Agent': f'CiteGuard/1.0 (mailto:{self.settings.api_contact_email})'}
+        query_words = [w for w in re.findall(r'[a-zA-Z0-9]+', query) if len(w) > 3][:6]
+        search_str = " AND ".join(f"all:{w}" for w in query_words)
+        params = {'search_query': search_str, 'max_results': 3}
         
         try:
-            with httpx.Client(timeout=min(3.0, remaining), transport=self.transport) as client:
-                response = client.get("http://export.arxiv.org/api/query", params=params, headers=headers)
+            with httpx.Client(timeout=min(10.0, remaining), follow_redirects=True, transport=self.transport) as client:
+                response = client.get("https://export.arxiv.org/api/query", params=params)
             
             if response.status_code in (429, 401, 403):
                 self.disabled_reason = 'rate_limited' if response.status_code == 429 else 'api_unavailable'
@@ -200,7 +200,8 @@ class ArxivEnricher(BaseEnricher):
                         raw_reference=raw_reference, provider='arxiv', status='enriched',
                         title=paper['title'], doi=paper['externalIds'].get('DOI'),
                         abstract=paper['abstract'], venue=paper['venue'], year=paper['year'],
-                        authors=[author['name'] for author in paper['authors']]
+                        authors=[author['name'] for author in paper['authors']],
+                        pdf_url=paper.get('pdf_url')
                     )
                 else:
                     fallback.status = 'ambiguous_match' if matches else 'not_found'
@@ -218,13 +219,20 @@ class ArxivEnricher(BaseEnricher):
         authors = work.findall('atom:author/atom:name', ns)
         doi_elem = work.find('arxiv:doi', ns)
         
+        pdf_url = None
+        for link in work.findall('atom:link', ns):
+            if link.get('title') == 'pdf':
+                pdf_url = link.get('href')
+                break
+        
         return {
             'title': title.text.replace('\n', ' ').strip() if title is not None else None,
             'externalIds': {'DOI': doi_elem.text if doi_elem is not None else None},
             'abstract': abstract.text.replace('\n', ' ').strip() if abstract is not None else None,
             'venue': 'arXiv',
             'year': int(published.text[:4]) if published is not None and published.text else None,
-            'authors': [{'name': a.text} for a in authors if a is not None]
+            'authors': [{'name': a.text} for a in authors if a is not None],
+            'pdf_url': pdf_url
         }
 
 
@@ -239,18 +247,22 @@ class CompositeEnricher:
     def enrich(self, raw_reference):
         # OpenAlex
         res = self.openalex.enrich(raw_reference)
-        if res.status == 'enriched':
+        if res.status == 'enriched' and res.pdf_url:
             return res
             
         # Crossref
         res_crossref = self.crossref.enrich(raw_reference)
-        if res_crossref.status == 'enriched':
+        if res_crossref.status == 'enriched' and res_crossref.pdf_url:
             return res_crossref
             
         # arXiv
         res_arxiv = self.arxiv.enrich(raw_reference)
-        if res_arxiv.status == 'enriched':
+        if res_arxiv.status == 'enriched' and res_arxiv.pdf_url:
             return res_arxiv
             
-        # If none succeeded, return the OpenAlex failure response (since it's the primary one)
+        # If none had a PDF, return the best metadata we got (prefer enriched ones)
+        if res.status == 'enriched': return res
+        if res_crossref.status == 'enriched': return res_crossref
+        if res_arxiv.status == 'enriched': return res_arxiv
+        
         return res

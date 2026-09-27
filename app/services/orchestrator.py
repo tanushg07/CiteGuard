@@ -129,8 +129,40 @@ class Orchestrator:
                         "markers": st.get("markers", [])
                     })
 
+            # Fetch missing PDFs automatically
+            from app.services.downloader import download_source_pdf
+            import os
+            for index, claim in enumerate(claims):
+                if claim.reference_metadata and claim.reference_metadata.pdf_url:
+                    marker = claim.citation_marker
+                    already_have = any(
+                        marker in s.get('markers', []) or marker == s.get('citation') or marker in s.get('name', '')
+                        for s in sources_to_index
+                    )
+                    if not already_have:
+                        await notify(3, "Source Identification", "loading", f"Downloading source for {marker}...", claims_found=len(claims), pct=45 + int((index/max(1, len(claims)))*10))
+                        pdf_path = await download_source_pdf(claim.reference_metadata.pdf_url, claim.reference_metadata.title or f"Source {marker}")
+                        if pdf_path:
+                            try:
+                                d_parsed = await asyncio.wait_for(asyncio.to_thread(self.parser.parse, pdf_path), timeout=60.0)
+                                for paragraph in d_parsed.get('paragraphs', []):
+                                    sources_to_index.append({
+                                        'name': claim.reference_metadata.title or f"Source {marker}",
+                                        'text': paragraph['text'],
+                                        'page_number': paragraph['page_number'],
+                                        'citation': marker,
+                                        'markers': [marker]
+                                    })
+                            except Exception as e:
+                                logger.warning(f"Could not parse downloaded PDF for {marker}: {e}")
+                            finally:
+                                try:
+                                    os.unlink(pdf_path)
+                                except OSError:
+                                    pass
+
             if not sources_to_index:
-                warnings.append("No source documents supplied. Upload cited sources to verify claims.")
+                warnings.append("No source documents supplied and auto-download failed. Upload cited sources to verify claims.")
             # Each claim searches only explicitly mapped sources. A sole source is
             # the user's selected source; multiple sources require a marker/title match.
             from app.services.sources import sources_for_claim

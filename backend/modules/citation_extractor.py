@@ -61,7 +61,8 @@ class CrossrefEnricher:
                     fallback = ReferenceMetadata(raw_reference=raw_reference, provider='crossref',
                         status='enriched', title=paper['title'], doi=paper['externalIds']['DOI'],
                         abstract=paper['abstract'], venue=paper['venue'], year=paper['year'],
-                        authors=[author['name'] for author in paper['authors']])
+                        authors=[author['name'] for author in paper['authors']],
+                        pdf_url=paper.get('pdf_url'))
                 else:
                     fallback.status = 'ambiguous_match' if matches else 'not_found'
         except (requests.RequestException, ValueError, TypeError, AttributeError, KeyError, IndexError):
@@ -73,6 +74,12 @@ class CrossrefEnricher:
     def _normalize(work):
         dates = (work.get('published') or work.get('issued') or {}).get('date-parts') or []
         abstract = work.get('abstract')
+        pdf_url = None
+        for link in work.get('link', []):
+            if link.get('content-type') == 'application/pdf':
+                pdf_url = link.get('URL')
+                break
+
         return {
             'title': (work.get('title') or [None])[0],
             'externalIds': {'DOI': work.get('DOI')},
@@ -81,4 +88,5 @@ class CrossrefEnricher:
             'year': dates[0][0] if dates and dates[0] else None,
             'authors': [{'name': ' '.join(filter(None, [a.get('given'), a.get('family')])) or a.get('name', '')}
                         for a in (work.get('author') or [])],
+            'pdf_url': pdf_url,
         }
