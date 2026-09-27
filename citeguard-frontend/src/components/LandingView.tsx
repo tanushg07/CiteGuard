@@ -6,9 +6,7 @@ import {
   ShieldCheck, 
   Sparkles, 
   FileCode, 
-  CheckCircle2, 
-  Plus,
-  Trash2
+  CheckCircle2
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -26,7 +24,6 @@ interface LandingViewProps {
 const LandingView: React.FC<LandingViewProps> = ({ onStartAnalysis }) => {
   const [mode, setMode] = useState<'pdf' | 'text'>('pdf');
   const [targetFile, setTargetFile] = useState<File | null>(null);
-  const [sourceFiles, setSourceFiles] = useState<File[]>([]);
   const [isBackendHealthy, setIsBackendHealthy] = useState<boolean | null>(null);
 
   // Text mode inputs
@@ -44,29 +41,12 @@ const LandingView: React.FC<LandingViewProps> = ({ onStartAnalysis }) => {
       const file = e.dataTransfer.files[0];
       if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
         setTargetFile(file);
+        onStartAnalysis({ type: 'pdf', targetFile: file, sourceFiles: [] });
       }
     }
   };
 
-  const handleSourceFilesAdd = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const newFiles = Array.from(e.target.files).filter(f => f.name.endsWith('.pdf'));
-      setSourceFiles(prev => [...prev, ...newFiles]);
-    }
-  };
 
-  const removeSourceFile = (index: number) => {
-    setSourceFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleStartPDFAnalysis = () => {
-    if (!targetFile) return;
-    onStartAnalysis({
-      type: 'pdf',
-      targetFile,
-      sourceFiles,
-    });
-  };
 
   const handleStartTextAnalysis = () => {
     if (!targetText.trim()) return;
@@ -149,7 +129,13 @@ const LandingView: React.FC<LandingViewProps> = ({ onStartAnalysis }) => {
               id="target-pdf-input"
               accept=".pdf"
               className="hidden"
-              onChange={(e) => e.target.files?.[0] && setTargetFile(e.target.files[0])}
+              onChange={(e) => {
+                if (e.target.files?.[0]) {
+                  const file = e.target.files[0];
+                  setTargetFile(file);
+                  onStartAnalysis({ type: 'pdf', targetFile: file, sourceFiles: [] });
+                }
+              }}
             />
 
             {targetFile ? (
@@ -182,61 +168,7 @@ const LandingView: React.FC<LandingViewProps> = ({ onStartAnalysis }) => {
             )}
           </div>
 
-          {/* Supplementary Cited Papers (Optional) */}
-          <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-semibold text-slate-900">Cited Source PDFs</h4>
-                <p className="text-xs text-slate-500">Attach the cited papers. For multiple sources, name files with citation markers, e.g. [2] Study.pdf. Without sources, claims have insufficient evidence.</p>
-              </div>
-              <label
-                htmlFor="source-pdfs-input"
-                className="inline-flex items-center space-x-1.5 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-300 px-3 py-1.5 rounded cursor-pointer transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Source Paper</span>
-              </label>
-              <input
-                type="file"
-                id="source-pdfs-input"
-                accept=".pdf"
-                multiple
-                className="hidden"
-                onChange={handleSourceFilesAdd}
-              />
-            </div>
-
-            {sourceFiles.length > 0 && (
-              <div className="space-y-2 pt-2 border-t border-slate-100">
-                {sourceFiles.map((file, idx) => (
-                  <div key={idx} className="flex items-center justify-between bg-slate-50 px-3 py-2 rounded border border-slate-200 text-xs">
-                    <span className="truncate font-medium text-slate-800">{file.name}</span>
-                    <button
-                      onClick={() => removeSourceFile(idx)}
-                      className="text-slate-400 hover:text-red-600 p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Submit Action */}
-          <div className="flex justify-end pt-2">
-            <button
-              onClick={handleStartPDFAnalysis}
-              disabled={!targetFile}
-              className={`px-8 py-3 rounded-md text-sm font-medium transition-all ${
-                targetFile
-                  ? 'bg-slate-900 text-white hover:bg-slate-800 shadow-sm cursor-pointer'
-                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-              }`}
-            >
-              Verify Citations & Evidence
-            </button>
-          </div>
+          {/* The Supplementary Cited Papers section and Submit button have been removed because sources are fetched automatically. */}
         </div>
       )}
 
