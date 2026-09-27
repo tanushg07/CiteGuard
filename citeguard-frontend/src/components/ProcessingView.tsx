@@ -19,13 +19,13 @@ interface ProcessingViewProps {
 }
 
 const DEFAULT_STEPS: PipelineStep[] = [
-  { id: 1, name: 'PDF Ingestion & Parsing', status: 'pending', detail: 'Deconstructing PDF structure and layout...' },
-  { id: 2, name: 'Claim Extraction', status: 'pending', detail: 'Isolating bracketed and author-year citations...' },
-  { id: 3, name: 'Source Identification', status: 'pending', detail: 'Mapping bibliography and reference corpora...' },
+  { id: 1, name: 'Analyzing whole paper', status: 'pending', detail: 'Deconstructing PDF structure and layout...' },
+  { id: 2, name: 'Extracting citations', status: 'pending', detail: 'Isolating bracketed and author-year citations...' },
+  { id: 3, name: 'Identifying source papers', status: 'pending', detail: 'Mapping bibliography and reference corpora...' },
   { id: 4, name: 'Evidence Retrieval', status: 'pending', detail: 'Querying TF-IDF / BM25 lexical candidate index...' },
   { id: 5, name: 'Cross-Encoder Re-ranking', status: 'pending', detail: 'MS-MARCO neural semantic alignment scoring...' },
-  { id: 6, name: 'NLI Verification', status: 'pending', detail: 'DistilBERT MNLI textual entailment inference...' },
-  { id: 7, name: 'Numerical Verification', status: 'pending', detail: 'Cross-referencing metrics, units, and statistics...' },
+  { id: 6, name: 'Verifying claims', status: 'pending', detail: 'DistilBERT MNLI textual entailment inference...' },
+  { id: 7, name: 'Preparing report', status: 'pending', detail: 'Cross-referencing metrics, units, and statistics...' },
 ];
 
 const ProcessingView: React.FC<ProcessingViewProps> = ({ params, onComplete, onError, onCancel }) => {
@@ -77,7 +77,7 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({ params, onComplete, onE
         if (message.status === 'update') {
           const update = message.data;
           setSteps(old => old.map(step => step.id === update.step_id
-            ? { ...step, status: update.status, detail: update.detail }
+            ? { ...step, name: update.name, status: update.status, detail: update.detail }
             : step.id < update.step_id ? { ...step, status: 'complete' } : step));
         }
         if (Date.now() - started > 15 * 60 * 1000) throw new Error('Analysis timed out. Please retry.');

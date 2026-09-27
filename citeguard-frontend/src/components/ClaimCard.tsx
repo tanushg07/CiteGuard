@@ -16,15 +16,16 @@ export default function ClaimCard({ claim, selected, onSelect }: {
 }) {
   const [expanded, setExpanded] = useState(false);
   const panelId = useId();
-  const tone = claim.status === 'Supported' ? 'supported' : claim.status === 'Contradicted' ? 'contradicted' : 'uncertain';
+  const verdict = claim.final_verdict || 'INSUFFICIENT_EVIDENCE';
+  const tone = verdict === 'SUPPORTED' ? 'supported' : verdict === 'CONTRADICTED' ? 'contradicted' : 'uncertain';
   return <article className={`claim-card ${tone} ${selected ? 'selected' : ''}`}>
     <button className="w-full text-left cursor-pointer" onClick={onSelect} aria-pressed={selected}>
       <div className="flex justify-between gap-2 text-xs mb-2">
         <span className="font-mono font-semibold">{claim.citation_marker}</span>
-        <span>{claim.status === 'Unrelated' ? 'Insufficient evidence' : claim.status}</span>
+        <span>{verdict.toLowerCase().replaceAll('_',' ')}</span>
       </div>
       <p className="text-sm leading-relaxed line-clamp-3">{claim.text}</p>
-      <p className="mt-2 text-xs text-slate-500">Page {claim.page_number} · {claim.confidence}% confidence</p>
+      <p className="mt-2 text-xs text-slate-500">Page {claim.page_number} · {claim.claim_group_id}</p>
     </button>
     <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-controls={panelId}
       className="text-xs font-semibold mt-3 text-slate-600 cursor-pointer">{expanded ? '− Hide explanation' : '+ Why this verdict?'}</button>

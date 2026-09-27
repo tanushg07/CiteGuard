@@ -1,6 +1,7 @@
+import { api } from './services/api';
 import Toast from './components/Toast';
 import { notify } from './services/notifications';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import LandingView from './components/LandingView';
 import ProcessingView from './components/ProcessingView';
 import DashboardView from './components/DashboardView';
@@ -24,6 +25,15 @@ function App() {
   const [params, setParams] = useState<AnalysisParams | null>(null);
   const [results, setResults] = useState<AnalysisResponse | null>(null);
 
+  useEffect(() => {
+    const job = new URLSearchParams(window.location.search).get('job');
+    if (!job) return;
+    let active = true;
+    api.getResults(job).then(data => { if (active) { setResults(data); setView('dashboard'); } })
+      .catch(error => { if (active) notify(error.message, 'error'); });
+    return () => { active = false; };
+  }, []);
+
   const handleStartAnalysis = (analysisParams: AnalysisParams) => {
     setParams(analysisParams);
     setView('processing');
@@ -31,11 +41,13 @@ function App() {
 
   const handleProcessingComplete = (data: AnalysisResponse) => {
     setResults(data);
+    window.history.replaceState(null, '', `?job=${encodeURIComponent(data.job_id)}`);
     notify(`Analysis complete: ${data.summary.total_claims} claims reviewed.`);
     setView('dashboard');
   };
 
   const handleReset = () => {
+    window.history.replaceState(null, '', window.location.pathname);
     setParams(null);
     setResults(null);
     setView('landing');
