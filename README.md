@@ -1,178 +1,106 @@
 # CiteGuard
 
-**Follow every claim back to its evidence.** A local research workbench for citation extraction, passage retrieval, natural language inference, and numerical consistency checks.
+Upload one research PDF, click **Verify**, and inspect each citation against passages from the actual cited source. The UI does not require claims, source papers, or URLs from the user. Results are automated research judgments, not a measured accuracy guarantee.
 
-![Local build](https://img.shields.io/badge/local_build-verified-15803d)
-![Python](https://img.shields.io/badge/Python-3.12-3776AB)
-![React](https://img.shields.io/badge/React-19.2-149ECA)
-![License](https://img.shields.io/badge/license-MIT-blue)
-
-The build badge records local validation, not hosted CI. CiteGuard supports a reproducible single-process local workflow; its judgments remain research aids requiring human review.
-
-## Features
-
-- Parse PDFs or pasted text with citation and page provenance; expand grouped citations into individual claim/source pairs.
-- Match user-supplied source documents to references, retrieve with BM25 and TF-IDF, and rerank with a cached MS-MARCO cross-encoder.
-- Verify entailment and contradiction with DistilBERT MNLI, compare exact quantities and common units, and abstain when evidence is missing or conflicting.
-- Enrich cited references through keyless Crossref lookup: DOI, title, venue, authors, year, and abstract when available. Preserve the original bibliography entry.
-- Generate optional two-sentence Groq explanations after verification, with local templates when keys, services, or valid responses are unavailable.
-- Review a dynamic support gauge, DOI links, venue badges, animated claim cards, shared-term/number highlighting, skeletons, and accessible notifications.
-- Track asynchronous jobs through polling or WebSocket, replay completed results, and export JSON/CSV.
-- Evaluate extraction, retrieval, verification, latency, and failure rate against a versioned synthetic dataset.
-
-## Architecture
+## Pipeline
 
 ```mermaid
 flowchart TD
-    UI[React report and upload UI] --> API[FastAPI job API]
-    API --> Parse[PDF or text parsing]
-    Parse --> Extract[Claims and citation markers]
-    Extract -. Bibliography only .-> Metadata[OpenAlex/arXiv/Crossref metadata]
-    Extract --> Map[Map supplied source documents]
-    Map --> Retrieve[BM25 and TF-IDF retrieval]
-    Retrieve --> Rank[MS-MARCO reranking]
-    Rank --> Verify[NLI and numerical checks]
-    Verify --> Final[Final verdict across passages]
-    Final --> Explain[Local explanation template]
-    Final -. Optional key .-> Groq[Groq explanation]
-    Explain --> Report[Persisted report]
-    Groq --> Report
-    Metadata --> Report
-    Report --> UI
+    PDF[One uploaded PDF] --> Parse[All pages: metadata, sections, paragraphs, sentences, references]
+    Parse --> Map[Sentence-local claims and citation-to-reference mapping]
+    Map --> Identify[Crossref / OpenAlex / arXiv identity checks]
+    Identify --> Fetch[Public PDF retrieval and content-addressed cache]
+    Fetch --> Text[Source identity check and page-tagged passages]
+    Text --> Retrieve[Source-isolated BM25 and TF-IDF retrieval]
+    Retrieve --> Rerank[Cached cross-encoder reranking]
+    Rerank --> Verify[NLI and explicit numerical checks]
+    Verify --> Decision[Conservative final verdict and reason]
+    Decision --> Report[Traceable persisted report, JSON and CSV]
+    Identify --> Unavailable[Explicit metadata-only / unavailable states]
+    Unavailable --> Report
 ```
 
-Metadata and LLM explanations never enter retrieval as evidence or overwrite verdicts. Without neural weights, the system reports a conservative lexical baseline explicitly.
+The complete document structure is built before source lookup. Citation groups share a claim ID while each cited reference gets a separate verification result. Candidate matching records DOI, title, author and year checks; ambiguous candidates are rejected. Source downloads follow public PDF links, publisher citation metadata and exact arXiv identifiers. Metadata and abstracts are never treated as verification evidence. The uploaded target is excluded as its own automatically retrieved evidence.
 
-## Quickstart
+Evidence retains source ID, URL, page, paragraph and section. Lexical retrieval, cross-encoder reranking, NLI probabilities and numerical calculations are separate fields. Optional Groq explanations run after the decision and cannot change it.
 
-### Prerequisites
+## Local setup
 
-Use **Python 3.12** and **Node.js 22.12+** (Node 24 is tested), with npm. The original plan mentioned Python 3.10+ and Node 18+; the pinned scientific packages and Vite 8 require newer runtimes. These locks target the tested Python 3.12 environment. A first neural-model download needs Internet access and disk space for the model weights.
-
-From the repository root, on Windows PowerShell:
+Use Python 3.12 and Node.js 22.12+ with npm. Node 24 was used for validation.
 
 ```powershell
 py -3.12 -m venv .venv312
 .\.venv312\Scripts\Activate.ps1
 pip install -r requirements.txt
-npm install --prefix citeguard-frontend
-# For repeatable installations from the lockfile, prefer:
 npm ci --prefix citeguard-frontend
+# Only if .env does not already exist:
 Copy-Item .env.example .env
+# Explicit, optional model download:
 python scripts/prepare_models.py
 .\start.ps1
 ```
 
-Skip `Copy-Item` if you already configured `.env`. Open **http://127.0.0.1:8000**. The launcher builds React and serves the compiled app through FastAPI. Ctrl+C stops the server. Model preparation is optional: without cached models the app runs the labeled baseline.
+Open http://127.0.0.1:8000. Select a PDF, click Verify, wait for source lookup and verification, then inspect results. Reports can be reopened using `?job=<job_id>`. JSON and CSV exports use the canonical decisions.
 
-On macOS/Linux, use `python3.12 -m venv .venv`, `source .venv/bin/activate`, and `cp .env.example .env`, then install the same requirements and npm lock. Build with `npm run build --prefix citeguard-frontend` and serve with `uvicorn app.main:app --host 127.0.0.1 --port 8000`. The Windows launcher is not needed.
+On Linux/macOS, create/activate a Python 3.12 virtual environment, install the same requirements, run `npm ci --prefix citeguard-frontend`, `npm run build --prefix citeguard-frontend`, then `uvicorn app.main:app --host 127.0.0.1 --port 8000`. Development uses that backend plus `npm run dev --prefix citeguard-frontend` in a second terminal.
 
-For development, run in two terminals with the Python environment activated:
+### Configuration and network behavior
 
-```sh
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-npm run dev --prefix citeguard-frontend
-```
-
-The backend entrypoint is `app.main:app`, not `main:app`. Vite proxies `/api` to port 8000. Use the Vite URL printed by the dev server.
-
-### Optional Groq key and settings
-
-Create a key in the [Groq console](https://console.groq.com/keys) using its free tier, then put it in the root `.env` as `GROQ_API_KEY=your-key`. Restart the backend after editing settings. Free-tier requests are rate-limited; availability and quotas are controlled by Groq. The integration uses the [official Groq SDK and chat API](https://console.groq.com/docs/text-chat) with [`llama-3.1-8b-instant`](https://console.groq.com/docs/model/llama-3.1-8b-instant).
+Root `.env` is loaded automatically; environment variables override it. Secrets are not included in reports.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `GROQ_API_KEY` | empty | Enable optional hosted explanations; empty uses templates |
-| `GROQ_TIMEOUT_SECONDS` | `5` | Per-request timeout, without automatic retries |
-| `CROSSREF_ENABLED` | `true` | Keyless bibliography metadata enrichment |
-| `CROSSREF_CONTACT` | `citeguard@example.com` | Example email in the `CiteGuard/1.0` user-agent; replace with your contact |
-| `CROSSREF_TIMEOUT_SECONDS` | `3` | Maximum timeout for each network operation |
-| `CITEGUARD_MODE` | `neural` | `neural` or intentional `baseline` |
-| `CITEGUARD_ALLOW_DOWNLOAD` | `0` | Opt into model downloads during model loading |
-| `OPENALEX_ENABLED` | `true` | Keyless bibliography metadata enrichment using OpenAlex |
-| `ARXIV_ENABLED` | `true` | Keyless bibliography metadata enrichment using arXiv API |
-| `API_CONTACT_EMAIL` | `citeguard@example.com` | Example email in the `CiteGuard/1.0` user-agent; replace with your contact |
+| CITEGUARD_MODE | neural | Use neural models, or intentional baseline mode |
+| CITEGUARD_ALLOW_DOWNLOAD | 0 | Model loading uses only cached weights unless explicitly enabled |
+| CROSSREF_ENABLED / OPENALEX_ENABLED / ARXIV_ENABLED | true | Scholarly metadata providers |
+| API_CONTACT_EMAIL | citeguard@example.com | Replace with a real contact for scholarly API requests |
+| OPENALEX_API_KEY | empty | Optional OpenAlex authentication |
+| SOURCE_CONCURRENCY | 3 | Concurrent reference resolutions, bounded to 1–5 |
+| SOURCE_TIMEOUT_SECONDS | 15 | Timeout per source HTTP operation |
+| SOURCE_MAX_BYTES | 26214400 | Maximum downloaded source PDF size |
+| GROQ_API_KEY | empty | Optional hosted explanations; otherwise local templates |
+| GROQ_TIMEOUT_SECONDS | 5 | Explanation request timeout |
 
-`backend/config.py` loads the root `.env` regardless of the working directory. Shell variables take precedence; blank values use defaults. The API key uses Pydantic `SecretStr` and is never returned in reports. `.env` is ignored by Git. Invalid typed settings fail validation with a useful configuration error; missing keys do not prevent startup.
+There are no silent model downloads by default. Missing NLI weights yield INSUFFICIENT_EVIDENCE, never a lexical-only SUPPORTED final verdict. Missing reranker weights leave reranking scores absent while lexical retrieval remains available.
 
-[Crossref and OpenAlex require no registration or API key](https://www.crossref.org/documentation/retrieve-metadata/rest-api/access-and-authentication/). DOI lookups require an exact DOI match. Bibliographic searches require an unambiguous title/author/year match. Each extraction caches duplicate requests and admits at most 20 requests within a 20-second window; an in-flight call can outlast that window by its timeout. HTTP 429 stops additional calls for that extraction. Timeouts and malformed responses preserve raw bibliography text.
+Source fetching has a 45-second total bound per location, at most five candidate locations per reference, redirect validation, private/reserved-address blocking, PDF signature checks and a size cap. PDFs are cached by SHA-256 in `data/sources`; URL manifests reuse validated cached files for seven days. Provider timeouts/rate limits preserve explicit failure states. No paywall bypass or paid full-text service is used. Bibliographic queries leave this machine. If Groq is configured, selected claims and evidence also leave this machine for explanation generation. Uploaded files and job reports are stored locally; manage their retention yourself.
 
-Groq receives a bounded claim, selected evidence, final verdict, confidence, and numerical result. Each analysis makes at most 20 explanation calls; subsequent claims use templates. A failed request stops further calls for that analysis. Empty, excessively long, or non-two-sentence responses use templates. Generated explanations are labeled separately and can still be imperfect; the displayed verdict and source remain authoritative outputs of the verification pipeline.
+## Decisions
 
-For fully local operation set `CROSSREF_ENABLED=false`, `OPENALEX_ENABLED=false`, `ARXIV_ENABLED=false`, leave `GROQ_API_KEY` empty, and use cached models or baseline mode. The OpenAlex and arXiv integrations are enabled by default alongside Crossref to maximize metadata retrieval.
+The authoritative API field is `final_verdict`, accompanied by `decision_reason`. Legacy `status` and confidence fields remain for compatibility and must not be interpreted as the final decision.
 
-### Try a document
-
-Click **Run Synthetic Demo**, or choose **Direct Text / LaTeX Input**:
-
-- Manuscript: `The dose was 2 mg [1].`
-- Source: `The dose was 2 mg.`
-
-For uploadable examples run `python evaluation/generate_dataset.py`, then upload `data/demo/manuscript.pdf` and the source PDFs generated alongside it. For real papers, supply the cited source PDFs yourself. Prefix multiple source filenames with markers, for example `[2] Study.pdf`. A single supplied source is treated as the user-selected source. The text API also accepts explicit `sources: [{name, text, markers: ["[2]"]}]` mappings.
-
-Missing source text produces insufficient evidence. Citation markers include `[1]`, `[1, 3-5]`, `(Smith et al., 2020)`, and `Smith (2020)`. Overlap highlighting shows shared lexical terms and numbers, not proof of entailment or a named-entity recognition result.
-
-## API
-
-Interactive documentation: **http://127.0.0.1:8000/docs**.
-
-| Endpoint | Behavior |
+| Decision | Meaning |
 | --- | --- |
-| `GET /api/health` | Health and configured neural/baseline mode |
-| `POST /api/verify` | Multipart `target_file`, optional repeated `source_files`; returns 202 and `job_id` |
-| `POST /api/analyze-text` | JSON `target_text`, optional `source_text`/`sources`, `document_title`; returns 202 |
-| `GET /api/jobs/{job_id}` | Queued, progress, completed, or error state |
-| `GET /api/results/{job_id}` | Report; 409 while pending, 422 on analysis failure |
-| `WS /api/ws/{job_id}` | Current state and subsequent changes; closes normally after completion/error |
-| `GET /api/export/{job_id}?format=json` | JSON report; `format=csv` also supported |
-| `GET /api/benchmark` | Run the nine-fixture synthetic demo |
-| `GET /api/metrics` | Compute the Week 3 evaluation metrics |
+| SUPPORTED | Selected passage entails the claim and applicable numerical checks do not conflict |
+| PARTIALLY_SUPPORTED | A conservative clause split finds support for one component, with another unresolved |
+| CONTRADICTED | NLI finds contradiction, or an explicit arithmetic check fails |
+| INSUFFICIENT_EVIDENCE | Available passages, model state or numerical checks cannot establish the claim |
+| SOURCE_UNAVAILABLE | No accepted accessible full text or usable metadata result |
+| SOURCE_METADATA_ONLY | Source identified but full text was not retrieved |
+| NOT_VERIFIABLE | Navigation/acknowledgement or flattened table without a safely isolated assertion |
+| EXTRACTION_FAILED | Retrieved PDF could not provide usable text |
 
-Uploads require a `.pdf` filename and PDF signature. Non-PDF content returns 400; oversized files return 413. Each file is limited to 25 MB and each job to 30 source PDFs. Corrupt PDFs that pass the signature check become terminal analysis errors. `Unrelated` remains the legacy API label for insufficient evidence.
+Unavailable full text is never interpreted as a false claim. Conflicting passage judgments and truncated NLI input abstain. A numerical value absent from evidence is unresolved, not automatically contradicted. Explicit percentage-point and relative-percent arithmetic are supported; ambiguous percent wording abstains.
 
-Reports include `reasoning`, `reasoning_provider`, numerical comparisons, evidence candidates, and reference metadata per claim. Jobs persist under `data/jobs`; pending jobs interrupted by a restart are reported as errors. Run **one server worker** because active job coordination is in memory.
+## Validation
 
-## Tests and evaluation
-
-```sh
-python -m pytest -q
-python -m ruff check app backend tests evaluation scripts
-python -m pip check
-npm run lint --prefix citeguard-frontend
+```powershell
+.\.venv312\Scripts\python.exe -m pytest -q --basetemp .pytest-tmp-check
+.\.venv312\Scripts\python.exe -m ruff check app backend tests scripts/e2e_pdf.py
 npm run build --prefix citeguard-frontend
-python -m app.evaluation.run_evaluation
+npm run lint --prefix citeguard-frontend
+.\.venv312\Scripts\python.exe scripts/e2e_pdf.py attention.pdf --output data/e2e-attention-final.json
 ```
 
-The final integration suite is `backend/tests/test_final_pipeline.py`. It covers keyless metadata, configuration precedence, missing keys, request timeouts, invalid service output, cache isolation, rate-limit fallback, unchanged verdicts after explanation generation, invalid PDF uploads, complete analysis, and normal WebSocket closure. External providers are mocked in these tests; no paid requests or API keys are required. Existing neural integration tests use cached model weights, prepared with `scripts/prepare_models.py`.
+The E2E script performs a real multipart upload through FastAPI, executes the actual asynchronous job, polls completion and saves the full report. Its PDF path is arbitrary; the application contains no hardcoded example paper or results. The last command requires a local copy of that public paper and network access. See [the implementation and validation report](docs/IMPLEMENTATION_REPORT.md) for observed results and file-by-file changes.
 
-Deprecation and runtime warnings fail the test suite. One narrow documented exception covers Starlette 1.6.0's deprecated AnyIO `BlockingPortal` import; Pydantic and application async warnings remain errors.
+## Known limitations
 
-The evaluator writes `evaluation_results.json` with extraction recall/precision; retrieval Recall@1/3/5, Precision@3 and MRR; three-class accuracy and macro precision/recall/F1; processing time, per-citation latency and failure rate. Numerical mismatch maps to contradiction for the three-class evaluation. Failed documents stay in the denominator. Precision@3 uses three ranks even when fewer passages are returned.
-
-The nine fixtures in `evaluation/golden_standard.json` are **synthetic integration examples**, not a real-world accuracy benchmark. Add independently reviewed, representative papers and a held-out split before making research accuracy claims. Parameter sweep scripts in `app/evaluation` are exploratory.
-
-## Repository and stack
-
-```text
-app/                         FastAPI, parsing, extraction, retrieval, verification
-backend/config.py            Pydantic Settings and secret handling
-backend/modules/             Crossref and Groq integrations
-backend/tests/               Week 4 integration regression tests
-citeguard-frontend/           Active React + TypeScript + Vite frontend
-  src/components/            ClaimCard, DocumentSummary, Toast, ReportSkeleton
-  package.json               Exact direct dependency versions
-  package-lock.json          Transitive npm dependency lock
-frontend/                    Historical static frontend (not the active app)
-tests/                       Existing extraction/retrieval/API/neural tests
-evaluation/                  Synthetic fixtures and PDF generator
-requirements.txt             Installation entrypoint
-requirements-lock.txt        Exact Python dependency versions
-```
-
-FastAPI, Pydantic v2/settings, pdfplumber, scikit-learn, PyTorch, Transformers, Sentence Transformers, requests, Groq SDK, React 19, TypeScript, Tailwind CSS 4, Vite 8, Lucide, pytest and Ruff. Existing source paths are retained to keep Week 1–3 imports and launcher behavior compatible.
-
-## Scope and contributions
-
-Designed for local research use. There are no user accounts, public-hosting controls, durable distributed queue, OCR, or automatic full-text acquisition. Complex layouts, tables, cross-page sentences and uncommon citation styles can need correction. General-domain NLI can make mistakes; confidence is not a calibrated truth probability. Numerical matching does not fully model statistical significance or entity-role swaps. Results are stored on disk until you remove them.
-
-Original responsibility areas: **Jagadish** — parsing/extraction and metadata; **Jayant** — retrieval and evaluation; **Dhanush** — NLI and numerical verification; **Tanush** — frontend and integration leadership. Week 4 integrates these roles in a single development pass. Contributions should include a concrete regression example and the relevant checks above. See [LICENSE](LICENSE).
+- Numbered bracket citations and common parenthesized/inline author-year patterns are recognized. Superscripts, footnote-only styles, complex author-year groups and unnumbered bibliographies are incomplete.
+- Page text is retained, but reading order, columns, tables, equations and reference boundaries are heuristic. No OCR is implemented. Scanned/image-only PDFs cannot be verified.
+- Claim association is sentence-local. Shared or long citation-bearing sentences are marked uncertain. Navigation/table detection and partial-support clause splitting are heuristics, not semantic claim decomposition.
+- Bibliography fields and frontmatter authors are best-effort. DOI/arXiv/title/author/year checks reduce mismatches but cannot guarantee source identity; rejected or ambiguous matches remain unresolved.
+- Some scholarly servers time out, throttle, block automated requests or expose only metadata. A fresh run can have different source coverage. Cached PDFs improve repeatability, not availability guarantees.
+- DistilBERT MNLI and MS-MARCO models are general-purpose models, not calibrated scientific fact checkers. NLI can misread negation, long context, tables, equations and technical language. Review original passages; model confidence is not probability of correctness.
+- Numerical support covers explicit quantities and narrowly defined percentage changes. Statistical significance, confidence intervals, implicit baselines, derived formulas and semantic measurement alignment are incomplete. Matching numbers alone does not prove a claim.
+- Jobs use a single-process local store. There is no distributed queue, account isolation, production retention policy or hardened multi-user deployment. Keep the default loopback binding.

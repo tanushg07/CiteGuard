@@ -32,3 +32,9 @@ node-v*-win-x64/
 
 # Sample files
 *.pdf
+
+# Reproducible test scratch and retrieved scholarly content
+.pytest-tmp*/
+data/sources/
+data/e2e-*.json
+tmp/
