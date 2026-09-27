@@ -24,3 +24,11 @@ Thumbs.db
 # IDEs
 .vscode/
 .idea/
+
+# Temp Node.js installations
+node.zip
+node22.zip
+node-v*-win-x64/
+
+# Sample files
+*.pdf
