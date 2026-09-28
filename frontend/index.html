@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CiteGuard | AI Evidence Alignment</title>
+    <meta name="description" content="Automated citation verification and evidence alignment system.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="bg-shapes">
+        <div class="shape shape-1"></div>
+        <div class="shape shape-2"></div>
+        <div class="shape shape-3"></div>
+    </div>
+
+    <main class="container">
+        <header class="header">
+            <div class="logo">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L3 7V13.5C3 18.06 6.89 22.35 12 24C17.11 22.35 21 18.06 21 13.5V7L12 2Z" fill="url(#paint0_linear_logo)"/>
+                    <path d="M10 16L6 12L7.41 10.59L10 13.17L16.59 6.58L18 8L10 16Z" fill="#0A0F1A"/>
+                    <defs>
+                        <linearGradient id="paint0_linear_logo" x1="12" y1="2" x2="12" y2="24" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#00E5FF" />
+                            <stop offset="1" stop-color="#0066FF" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <h1>CiteGuard</h1>
+            </div>
+            <p class="subtitle">Intelligent Citation Verification & Evidence Alignment</p>
+        </header>
+
+        <section class="upload-section glass-panel">
+            <h2>Verify Citations</h2>
+            <p class="section-desc">Upload the citing paper and its source reference to verify claims automatically.</p>
+            
+            <form id="verifyForm" class="upload-form">
+                <div class="file-inputs">
+                    <div class="file-drop-zone" id="targetDropZone">
+                        <div class="drop-content">
+                            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+                            <h3>1. Target Paper</h3>
+                            <p>Upload the PDF containing claims</p>
+                            <span class="file-name" id="targetFileName">No file selected</span>
+                        </div>
+                        <input type="file" id="targetFile" accept=".pdf" required>
+                    </div>
+
+                    <div class="file-drop-zone" id="sourceDropZone">
+                        <div class="drop-content">
+                            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+                            <h3>2. Source Paper</h3>
+                            <p>Upload the cited PDF evidence</p>
+                            <span class="file-name" id="sourceFileName">No file selected</span>
+                        </div>
+                        <input type="file" id="sourceFile" accept=".pdf" required>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary" id="submitBtn">
+                    <span class="btn-text">Run Analysis</span>
+                    <div class="loader hidden"></div>
+                </button>
+            </form>
+            
+            <div id="errorBanner" class="error-banner hidden">
+                <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                <span id="errorText"></span>
+            </div>
+        </section>
+
+        <section id="resultsSection" class="results-section hidden">
+            <div class="results-header">
+                <h2>Analysis Results</h2>
+                <div class="summary-stats">
+                    <div class="stat-badge stat-supported">
+                        <span class="stat-num" id="statSupported">0</span>
+                        <span class="stat-label">Supported</span>
+                    </div>
+                    <div class="stat-badge stat-contradicted">
+                        <span class="stat-num" id="statContradicted">0</span>
+                        <span class="stat-label">Contradicted</span>
+                    </div>
+                    <div class="stat-badge stat-insufficient">
+                        <span class="stat-num" id="statInsufficient">0</span>
+                        <span class="stat-label">Insufficient</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="results-list" id="resultsContainer">
+                <!-- Result cards injected via JS -->
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

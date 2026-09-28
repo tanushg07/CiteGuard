@@ -1,0 +1,40 @@
+.venv312/
+.env
+.env.local
+data/jobs/
+evaluation_results.json
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest
+.pytest_cache/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Temp Node.js installations
+node.zip
+node22.zip
+node-v*-win-x64/
+
+# Sample files
+*.pdf
+
+# Reproducible test scratch and retrieved scholarly content
+.pytest-tmp*/
+data/sources/
+data/e2e-*.json
+tmp/
