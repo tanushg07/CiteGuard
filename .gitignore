@@ -1,13 +1,22 @@
-.venv312/
+.venv*/
 .env
 .env.local
 data/jobs/
 evaluation_results.json
 # Virtual environments
-.venv/
 venv/
 ENV/
 env/
+
+# Python build and test artifacts
+build/
+dist/
+*.egg-info/
+.coverage*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
 
 # Python cache
 __pycache__/
